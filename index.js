@@ -10,9 +10,7 @@ const {
   GatewayIntentBits,
   Partials,
   Events,
-  EmbedBuilder,
-  AuditLogEvent,
-  PermissionsBitField
+  EmbedBuilder
 } = require('discord.js');
 
 const {
@@ -23,12 +21,13 @@ const {
 } = require('@discordjs/voice');
 
 // ============================================================
-// NMR BOT - 24/7 VOICE + LOGS + STATUS
+// NMR BOT - 24/7 VOICE BOT
+// Stable Reconnect + Logs + Status + Persistent Highest Time
 // ============================================================
 
-// =========================
+// ============================================================
 // CONFIG
-// =========================
+// ============================================================
 
 const TOKEN = process.env.TOKEN;
 
@@ -52,15 +51,14 @@ const MAX_RECONNECT_ATTEMPTS =
 const RECONNECT_DELAY =
   Number(process.env.RECONNECT_DELAY) || 5000;
 
-// =========================
-// DATA FILE
-// =========================
+// ============================================================
+// DATA
+// ============================================================
 
 const DATA_FILE = path.join(__dirname, 'data.json');
 
 let highestVoiceTime = 0;
 
-// تحميل أعلى وقت محفوظ
 function loadData() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
@@ -72,10 +70,13 @@ function loadData() {
           },
           null,
           2
-        )
+        ),
+        'utf8'
       );
 
       highestVoiceTime = 0;
+
+      console.log('📁 تم إنشاء data.json');
       return;
     }
 
@@ -92,12 +93,12 @@ function loadData() {
       Number(data.highestVoiceTime) || 0;
 
     console.log(
-      `💾 أعلى وقت محفوظ: ${formatDuration(highestVoiceTime)}`
+      `🏆 أعلى وقت محفوظ: ${formatDuration(highestVoiceTime)}`
     );
 
   } catch (error) {
     console.error(
-      '❌ فشل تحميل data.json:',
+      '❌ Error loading data.json:',
       error
     );
 
@@ -105,7 +106,6 @@ function loadData() {
   }
 }
 
-// حفظ أعلى وقت
 function saveData() {
   try {
     fs.writeFileSync(
@@ -119,16 +119,14 @@ function saveData() {
       ),
       'utf8'
     );
-
   } catch (error) {
     console.error(
-      '❌ فشل حفظ data.json:',
+      '❌ Error saving data.json:',
       error
     );
   }
 }
 
-// تحديث الرقم القياسي
 function updateHighestVoiceTime(currentTime) {
   if (
     Number.isFinite(currentTime) &&
@@ -148,43 +146,43 @@ function updateHighestVoiceTime(currentTime) {
   return false;
 }
 
-// =========================
+// ============================================================
 // VALIDATION
-// =========================
+// ============================================================
 
 if (!TOKEN) {
-  console.error('❌ TOKEN غير موجود في .env');
+  console.error('❌ TOKEN غير موجود');
   process.exit(1);
 }
 
 if (!VOICE_GUILD_ID) {
-  console.error('❌ VOICE_GUILD_ID غير موجود في .env');
+  console.error('❌ VOICE_GUILD_ID غير موجود');
   process.exit(1);
 }
 
 if (!VOICE_CHANNEL_ID) {
-  console.error('❌ VOICE_CHANNEL_ID غير موجود في .env');
+  console.error('❌ VOICE_CHANNEL_ID غير موجود');
   process.exit(1);
 }
 
 if (!LOG_GUILD_ID) {
-  console.error('❌ LOG_GUILD_ID غير موجود في .env');
+  console.error('❌ LOG_GUILD_ID غير موجود');
   process.exit(1);
 }
 
 if (!LOG_CHANNEL_ID) {
-  console.error('❌ LOG_CHANNEL_ID غير موجود في .env');
+  console.error('❌ LOG_CHANNEL_ID غير موجود');
   process.exit(1);
 }
 
 if (!STATUS_CHANNEL_ID) {
-  console.error('❌ STATUS_CHANNEL_ID غير موجود في .env');
+  console.error('❌ STATUS_CHANNEL_ID غير موجود');
   process.exit(1);
 }
 
-// =========================
+// ============================================================
 // CLIENT
-// =========================
+// ============================================================
 
 const client = new Client({
   intents: [
@@ -196,24 +194,29 @@ const client = new Client({
   ]
 });
 
-// =========================
-// VARIABLES
-// =========================
+// ============================================================
+// STATE
+// ============================================================
 
 let voiceJoinTime = null;
-let reconnectAttempts = 0;
+
 let reconnectTimer = null;
 
-let statusMessage = null;
+let reconnectAttempts = 0;
+
+let isConnecting = false;
+
+let isReconnecting = false;
 
 let shuttingDown = false;
 
-// منع إنشاء أكثر من اتصال في نفس الوقت
-let isConnecting = false;
+let statusMessage = null;
 
-// =========================
+let currentVoiceConnection = null;
+
+// ============================================================
 // FOOTER
-// =========================
+// ============================================================
 
 const FOOTER_GIF =
   'https://i.postimg.cc/qRBtmgzD/download-20260819-160352.gif';
@@ -232,34 +235,38 @@ function cairoDate() {
 }
 
 function applyFooter(embed) {
-  return embed.setFooter({
+  embed.setFooter({
     text: `𝓝𝓜𝓡 | ${cairoDate()}`,
     iconURL: FOOTER_GIF
   });
+
+  return embed;
 }
 
-// =========================
-// FORMAT DURATION
-// =========================
+// ============================================================
+// DURATION
+// ============================================================
 
 function formatDuration(ms) {
-  if (!ms || ms < 0) {
+  if (!ms || ms <= 0) {
     return '0 ثانية';
   }
 
-  const totalSeconds = Math.floor(ms / 1000);
+  const totalSeconds =
+    Math.floor(ms / 1000);
 
-  const days = Math.floor(
-    totalSeconds / 86400
-  );
+  const days =
+    Math.floor(totalSeconds / 86400);
 
-  const hours = Math.floor(
-    (totalSeconds % 86400) / 3600
-  );
+  const hours =
+    Math.floor(
+      (totalSeconds % 86400) / 3600
+    );
 
-  const minutes = Math.floor(
-    (totalSeconds % 3600) / 60
-  );
+  const minutes =
+    Math.floor(
+      (totalSeconds % 3600) / 60
+    );
 
   const seconds =
     totalSeconds % 60;
@@ -288,9 +295,9 @@ function formatDuration(ms) {
   return parts.join(' و ');
 }
 
-// =========================
+// ============================================================
 // GET LOG CHANNEL
-// =========================
+// ============================================================
 
 async function getLogChannel() {
   try {
@@ -300,10 +307,6 @@ async function getLogChannel() {
       );
 
     if (!guild) {
-      console.error(
-        '❌ لم يتم العثور على LOG_GUILD_ID'
-      );
-
       return null;
     }
 
@@ -313,10 +316,6 @@ async function getLogChannel() {
       );
 
     if (!channel) {
-      console.error(
-        '❌ لم يتم العثور على LOG_CHANNEL_ID'
-      );
-
       return null;
     }
 
@@ -324,28 +323,32 @@ async function getLogChannel() {
 
   } catch (error) {
     console.error(
-      '❌ خطأ في الحصول على روم اللوجات:',
-      error
+      '❌ getLogChannel:',
+      error.message
     );
 
     return null;
   }
 }
 
-// =========================
-// SEND LOG
-// =========================
+// ============================================================
+// LOG
+// ============================================================
 
 async function sendLog({
   title,
   description,
-  color = 0x5865F2
+  color
 }) {
   try {
     const channel =
       await getLogChannel();
 
     if (!channel) {
+      console.error(
+        '❌ روم اللوجات غير موجودة أو البوت لا يستطيع الوصول إليها'
+      );
+
       return false;
     }
 
@@ -353,7 +356,7 @@ async function sendLog({
       new EmbedBuilder()
         .setTitle(title)
         .setDescription(description)
-        .setColor(color)
+        .setColor(color || 0x5865F2)
         .setTimestamp();
 
     applyFooter(embed);
@@ -366,7 +369,7 @@ async function sendLog({
 
   } catch (error) {
     console.error(
-      '❌ فشل إرسال اللوج:',
+      '❌ فشل إرسال Log:',
       error
     );
 
@@ -374,58 +377,73 @@ async function sendLog({
   }
 }
 
-// =========================
-// START LOG
-// =========================
+// ============================================================
+// LOG EVENTS
+// ============================================================
 
-async function sendStartupLog() {
+async function logOnline() {
   await sendLog({
     title: '🟢 𝓝𝓜𝓡 BOT ONLINE',
     description:
       `البوت اشتغل بنجاح.\n\n` +
       `🤖 **الحالة:** متصل\n` +
-      `🎙️ **Voice:** ${VOICE_CHANNEL_ID}\n` +
+      `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
       `🕐 **الوقت:** ${cairoDate()}`,
     color: 0x57F287
   });
 }
 
-// =========================
-// RESTART LOG
-// =========================
-
-async function sendReconnectLog() {
+async function logDisconnected() {
   await sendLog({
-    title: '🔄 𝓝𝓜𝓡 BOT RECONNECT',
+    title: '🟡 𝓝𝓜𝓡 VOICE DISCONNECTED',
     description:
-      `تم إعادة اتصال البوت بالروم الصوتية.\n\n` +
-      `🤖 **الحالة:** متصل\n` +
-      `🎙️ **Voice Channel:** ${VOICE_CHANNEL_ID}\n` +
-      `🔁 **المحاولة:** ${reconnectAttempts}`,
+      `تم فقد الاتصال الصوتي.\n\n` +
+      `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
+      `🔄 **الحالة:** جاري استعادة الاتصال`,
     color: 0xFEE75C
   });
 }
 
-// =========================
-// ERROR LOG
-// =========================
+async function logReconnected() {
+  await sendLog({
+    title: '🟢 𝓝𝓜𝓡 VOICE RECONNECTED',
+    description:
+      `تم استعادة الاتصال بالروم الصوتية بنجاح.\n\n` +
+      `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
+      `🔄 **المحاولات:** ${reconnectAttempts}`,
+    color: 0x57F287
+  });
+}
 
-async function sendErrorLog(error) {
+async function logLeftVoice() {
+  await sendLog({
+    title: '⚠️ 𝓝𝓜𝓡 BOT LEFT VOICE',
+    description:
+      `البوت لم يعد داخل الروم الصوتية المطلوبة.\n\n` +
+      `🎙️ **الروم المطلوبة:** <#${VOICE_CHANNEL_ID}>\n` +
+      `🔄 **الإجراء:** محاولة إعادة الدخول`,
+    color: 0xFEE75C
+  });
+}
+
+async function logError(error) {
+  const text =
+    error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : String(error);
+
   await sendLog({
     title: '🔴 𝓝𝓜𝓡 BOT ERROR',
     description:
       `حدث خطأ في البوت.\n\n` +
-      `\`\`\`\n${String(error).slice(
-        0,
-        3500
-      )}\n\`\`\``,
+      `\`\`\`\n${text.slice(0, 3500)}\n\`\`\``,
     color: 0xED4245
   });
 }
 
-// =========================
+// ============================================================
 // STATUS CHANNEL
-// =========================
+// ============================================================
 
 async function getStatusChannel() {
   try {
@@ -447,38 +465,34 @@ async function getStatusChannel() {
 
   } catch (error) {
     console.error(
-      '❌ خطأ في الحصول على روم الحالة:',
-      error
+      '❌ getStatusChannel:',
+      error.message
     );
 
     return null;
   }
 }
 
-// =========================
-// BUILD STATUS EMBED
-// =========================
+// ============================================================
+// STATUS EMBED
+// ============================================================
 
 function buildStatusEmbed() {
-  const now =
-    Date.now();
-
   const currentVoiceTime =
     voiceJoinTime
-      ? now - voiceJoinTime
+      ? Date.now() - voiceJoinTime
       : 0;
 
-  // تحديث أعلى وقت قبل بناء الـEmbed
   updateHighestVoiceTime(
     currentVoiceTime
   );
 
   const embed =
     new EmbedBuilder()
-      .setTitle('𝓝𝓜𝓡 𝓑𝓞𝓣')
+      .setTitle('𝓝𝓡𝓜 𝓑𝓞𝓣')
       .setDescription(
         '```ansi\n' +
-        '🟢 Connected\n' +
+        '🟢 البوت يعمل بشكل طبيعي\n' +
         '```'
       )
       .setColor(0x57F287)
@@ -502,7 +516,7 @@ function buildStatusEmbed() {
           inline: false
         },
         {
-          name: '🏆 أعلى وقت للبوت',
+          name: '🏆 أعلى وقت',
           value:
             `\`${formatDuration(
               highestVoiceTime
@@ -517,20 +531,18 @@ function buildStatusEmbed() {
   return embed;
 }
 
-// =========================
-// FIND OLD STATUS MESSAGE
-// =========================
+// ============================================================
+// FIND STATUS MESSAGE
+// ============================================================
 
-async function findOldStatusMessage(
-  channel
-) {
+async function findStatusMessage(channel) {
   try {
     const messages =
       await channel.messages.fetch({
-        limit: 20
+        limit: 30
       });
 
-    const oldMessage =
+    return (
       messages.find(message => {
         if (
           message.author.id !==
@@ -542,46 +554,40 @@ async function findOldStatusMessage(
         return message.embeds.some(
           embed =>
             embed.title ===
-            '𝓝𝓜𝓡 𝓑𝓞𝓣'
+            '𝓝𝓡𝓜 𝓑𝓞𝓣'
         );
-      });
-
-    return oldMessage || null;
-
-  } catch (error) {
-    console.error(
-      '❌ فشل البحث عن رسالة الحالة:',
-      error
+      }) || null
     );
 
+  } catch {
     return null;
   }
 }
 
-// =========================
+// ============================================================
 // UPDATE STATUS
-// =========================
+// ============================================================
 
 async function updateStatus() {
+  if (
+    shuttingDown ||
+    !client.isReady()
+  ) {
+    return;
+  }
+
   try {
     const channel =
       await getStatusChannel();
 
     if (!channel) {
-      console.error(
-        '❌ STATUS_CHANNEL_ID غير موجود أو غير متاح'
-      );
-
       return;
     }
 
     const embed =
       buildStatusEmbed();
 
-    if (
-      statusMessage &&
-      statusMessage.id
-    ) {
+    if (statusMessage) {
       try {
         statusMessage =
           await statusMessage.edit({
@@ -596,7 +602,7 @@ async function updateStatus() {
     }
 
     const oldMessage =
-      await findOldStatusMessage(
+      await findStatusMessage(
         channel
       );
 
@@ -609,9 +615,7 @@ async function updateStatus() {
 
         return;
 
-      } catch {
-        statusMessage = null;
-      }
+      } catch {}
     }
 
     statusMessage =
@@ -621,23 +625,39 @@ async function updateStatus() {
 
   } catch (error) {
     console.error(
-      '❌ فشل تحديث Status:',
-      error
+      '❌ Status update error:',
+      error.message
     );
   }
 }
 
-// =========================
-// CONNECT TO VOICE
-// =========================
+// ============================================================
+// DESTROY CURRENT CONNECTION
+// ============================================================
 
-async function connectToVoice() {
-  if (shuttingDown) {
-    return;
-  }
+function destroyCurrentConnection() {
+  try {
+    const connection =
+      getVoiceConnection(
+        VOICE_GUILD_ID
+      );
 
-  if (isConnecting) {
-    return;
+    if (connection) {
+      connection.destroy();
+    }
+  } catch {}
+}
+
+// ============================================================
+// CREATE VOICE CONNECTION
+// ============================================================
+
+async function createVoiceConnection() {
+  if (
+    shuttingDown ||
+    isConnecting
+  ) {
+    return null;
   }
 
   isConnecting = true;
@@ -648,12 +668,6 @@ async function connectToVoice() {
         VOICE_GUILD_ID
       );
 
-    if (!guild) {
-      throw new Error(
-        'Voice Guild not found'
-      );
-    }
-
     const channel =
       await guild.channels.fetch(
         VOICE_CHANNEL_ID
@@ -661,23 +675,12 @@ async function connectToVoice() {
 
     if (!channel) {
       throw new Error(
-        'Voice Channel not found'
+        'Voice channel not found'
       );
-    }
-
-    const existingConnection =
-      getVoiceConnection(
-        VOICE_GUILD_ID
-      );
-
-    if (existingConnection) {
-      try {
-        existingConnection.destroy();
-      } catch {}
     }
 
     console.log(
-      `🎙️ Connecting to: ${channel.name}`
+      `🎙️ Connecting → ${channel.name}`
     );
 
     const connection =
@@ -692,37 +695,13 @@ async function connectToVoice() {
         selfMute: false
       });
 
-    await entersState(
-      connection,
-      VoiceConnectionStatus.Ready,
-      30000
-    );
+    currentVoiceConnection =
+      connection;
 
-    // بداية جلسة جديدة
-    voiceJoinTime =
-      Date.now();
+    // ========================================================
+    // CONNECTION EVENTS
+    // ========================================================
 
-    reconnectAttempts = 0;
-
-    console.log(
-      `✅ Connected to ${channel.name}`
-    );
-
-    await sendReconnectLog();
-
-    await updateStatus();
-
-    // Ready
-    connection.on(
-      VoiceConnectionStatus.Ready,
-      () => {
-        console.log(
-          '🟢 Voice connection READY'
-        );
-      }
-    );
-
-    // Disconnected
     connection.on(
       VoiceConnectionStatus.Disconnected,
       async () => {
@@ -731,23 +710,50 @@ async function connectToVoice() {
         }
 
         console.log(
-          '🟡 Voice connection DISCONNECTED'
+          '🟡 Voice DISCONNECTED'
         );
 
-        await sendLog({
-          title:
-            '🟡 𝓝𝓜𝓡 VOICE DISCONNECTED',
-          description:
-            `البوت فقد الاتصال بالروم الصوتية.\n\n` +
-            `🔄 جاري محاولة إعادة الاتصال...`,
-          color: 0xFEE75C
-        });
+        await logDisconnected();
 
-        scheduleReconnect();
+        // ====================================================
+        // مهم:
+        // نجرب استعادة الاتصال الحالي أولاً
+        // بدل destroy + create
+        // ====================================================
+
+        try {
+          await entersState(
+            connection,
+            VoiceConnectionStatus.Connecting,
+            5000
+          );
+
+          await entersState(
+            connection,
+            VoiceConnectionStatus.Ready,
+            15000
+          );
+
+          console.log(
+            '🟢 Voice connection recovered'
+          );
+
+          reconnectAttempts = 0;
+
+          await logReconnected();
+
+          return;
+
+        } catch {
+          console.log(
+            '⚠️ فشل استرجاع الاتصال الحالي'
+          );
+
+          scheduleReconnect();
+        }
       }
     );
 
-    // Destroyed
     connection.on(
       VoiceConnectionStatus.Destroyed,
       () => {
@@ -756,7 +762,7 @@ async function connectToVoice() {
         }
 
         console.log(
-          '🔴 Voice connection DESTROYED'
+          '🔴 Voice connection destroyed'
         );
 
         scheduleReconnect();
@@ -765,77 +771,186 @@ async function connectToVoice() {
 
     connection.on(
       'error',
-      async error => {
+      error => {
         console.error(
-          '❌ Voice error:',
+          '❌ Voice Error:',
           error
         );
 
-        await sendErrorLog(
-          error
+        logError(error).catch(
+          () => {}
         );
       }
     );
 
+    // ========================================================
+    // READY
+    // ========================================================
+
+    await entersState(
+      connection,
+      VoiceConnectionStatus.Ready,
+      30000
+    );
+
+    currentVoiceConnection =
+      connection;
+
+    // بداية جلسة جديدة
+    voiceJoinTime =
+      Date.now();
+
+    reconnectAttempts = 0;
+
+    console.log(
+      '🟢 Voice connection READY'
+    );
+
+    return connection;
+
   } catch (error) {
     console.error(
       '❌ Voice connection failed:',
-      error
+      error.message
     );
 
-    await sendErrorLog(error);
+    await logError(error);
 
     scheduleReconnect();
+
+    return null;
 
   } finally {
     isConnecting = false;
   }
 }
 
-// =========================
+// ============================================================
 // RECONNECT
-// =========================
+// ============================================================
 
 function scheduleReconnect() {
-  if (shuttingDown) {
-    return;
-  }
-
-  if (reconnectTimer) {
-    return;
-  }
-
   if (
-    reconnectAttempts >=
-    MAX_RECONNECT_ATTEMPTS
+    shuttingDown ||
+    reconnectTimer ||
+    isReconnecting
   ) {
-    console.error(
-      '❌ تم الوصول للحد الأقصى لمحاولات الاتصال'
-    );
-
-    reconnectAttempts = 0;
+    return;
   }
+
+  isReconnecting = true;
 
   reconnectAttempts++;
 
+  const attempt =
+    reconnectAttempts;
+
   console.log(
-    `🔄 Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`
+    `🔄 Reconnect scheduled: ${attempt}/${MAX_RECONNECT_ATTEMPTS}`
   );
 
   reconnectTimer =
-    setTimeout(async () => {
-      reconnectTimer = null;
+    setTimeout(
+      async () => {
+        reconnectTimer = null;
 
-      await connectToVoice();
-    }, RECONNECT_DELAY);
+        if (shuttingDown) {
+          isReconnecting = false;
+          return;
+        }
+
+        try {
+          // ==================================================
+          // قبل ما ندخل، نتأكد إن البوت فعلًا مش في الروم
+          // ==================================================
+
+          const guild =
+            await client.guilds.fetch(
+              VOICE_GUILD_ID
+            );
+
+          const member =
+            await guild.members.fetch(
+              client.user.id
+            );
+
+          if (
+            member.voice.channelId ===
+            VOICE_CHANNEL_ID
+          ) {
+            console.log(
+              '✅ البوت بالفعل داخل الروم - إلغاء reconnect'
+            );
+
+            reconnectAttempts = 0;
+            isReconnecting = false;
+
+            return;
+          }
+
+          // ==================================================
+          // Destroy أي connection قديم فقط لو البوت مش موجود
+          // ==================================================
+
+          destroyCurrentConnection();
+
+          await createVoiceConnection();
+
+          // لو نجح الاتصال
+          const updatedMember =
+            await guild.members.fetch(
+              client.user.id
+            );
+
+          if (
+            updatedMember.voice.channelId ===
+            VOICE_CHANNEL_ID
+          ) {
+            await logReconnected();
+
+            reconnectAttempts = 0;
+          }
+
+        } catch (error) {
+          console.error(
+            '❌ Reconnect error:',
+            error.message
+          );
+
+          if (
+            reconnectAttempts <
+            MAX_RECONNECT_ATTEMPTS
+          ) {
+            isReconnecting = false;
+            scheduleReconnect();
+            return;
+          }
+
+          console.log(
+            '⚠️ إعادة المحاولات من البداية...'
+          );
+
+          reconnectAttempts = 0;
+        }
+
+        isReconnecting = false;
+
+      },
+      RECONNECT_DELAY
+    );
 }
 
-// =========================
-// VOICE WATCHDOG
-// =========================
+// ============================================================
+// WATCHDOG
+// ============================================================
 
 async function voiceWatchdog() {
-  if (shuttingDown) {
+  if (
+    shuttingDown ||
+    !client.isReady() ||
+    isConnecting ||
+    isReconnecting
+  ) {
     return;
   }
 
@@ -845,42 +960,48 @@ async function voiceWatchdog() {
         VOICE_GUILD_ID
       );
 
-    if (!guild) {
-      return;
-    }
-
-    const me =
+    const member =
       await guild.members.fetch(
         client.user.id
       );
 
-    const voiceChannel =
-      me.voice.channel;
+    const channelId =
+      member.voice.channelId;
 
-    // البوت مش داخل الروم المطلوبة
+    // ========================================================
+    // البوت داخل الروم المطلوبة
+    // ========================================================
+
     if (
-      !voiceChannel ||
-      voiceChannel.id !==
-        VOICE_CHANNEL_ID
+      channelId ===
+      VOICE_CHANNEL_ID
     ) {
-      console.log(
-        '⚠️ البوت مش داخل الروم المطلوبة - جاري الاتصال...'
-      );
-
-      await connectToVoice();
+      return;
     }
+
+    // ========================================================
+    // البوت مش داخل الروم
+    // ========================================================
+
+    console.log(
+      '⚠️ Watchdog: البوت مش داخل الروم المطلوبة'
+    );
+
+    await logLeftVoice();
+
+    scheduleReconnect();
 
   } catch (error) {
     console.error(
       '❌ Watchdog error:',
-      error
+      error.message
     );
   }
 }
 
-// =========================
+// ============================================================
 // VOICE STATE UPDATE
-// =========================
+// ============================================================
 
 client.on(
   Events.VoiceStateUpdate,
@@ -903,44 +1024,40 @@ client.on(
     const newChannel =
       newState.channelId;
 
+    // ========================================================
+    // البوت خرج من الروم المطلوبة
+    // ========================================================
+
     if (
-      oldChannel !==
-        VOICE_CHANNEL_ID ||
+      oldChannel ===
+        VOICE_CHANNEL_ID &&
       newChannel !==
         VOICE_CHANNEL_ID
     ) {
-      if (
-        newChannel !==
-        VOICE_CHANNEL_ID
-      ) {
-        console.log(
-          '⚠️ البوت خرج من الروم الصوتية'
-        );
+      console.log(
+        '⚠️ VoiceState: البوت خرج من الروم'
+      );
 
-        await sendLog({
-          title:
-            '⚠️ 𝓝𝓜𝓡 BOT LEFT VOICE',
-          description:
-            `البوت خرج من الروم الصوتية.\n\n` +
-            `🔄 جاري إعادته تلقائيًا...`,
-          color: 0xFEE75C
-        });
+      await logLeftVoice();
 
-        scheduleReconnect();
-      }
+      // ======================================================
+      // نعمل reconnect واحد فقط
+      // ======================================================
+
+      scheduleReconnect();
     }
   }
 );
 
-// =========================
+// ============================================================
 // READY
-// =========================
+// ============================================================
 
 client.once(
   Events.ClientReady,
   async readyClient => {
     console.log(
-      '============================================'
+      '=========================================='
     );
 
     console.log(
@@ -952,59 +1069,51 @@ client.once(
     );
 
     console.log(
-      '============================================'
+      '=========================================='
     );
 
-    await sendStartupLog();
+    await logOnline();
 
-    await connectToVoice();
+    await createVoiceConnection();
 
     await updateStatus();
   }
 );
 
-// =========================
-// STATUS INTERVAL
-// =========================
+// ============================================================
+// STATUS UPDATE
+// ============================================================
 
 setInterval(
   async () => {
     if (
-      !client.isReady()
+      client.isReady()
     ) {
-      return;
+      await updateStatus();
     }
-
-    await updateStatus();
-
   },
   STATUS_UPDATE_INTERVAL
 );
 
-// =========================
-// VOICE CHECK INTERVAL
-// =========================
+// ============================================================
+// VOICE WATCHDOG
+// ============================================================
 
 setInterval(
   async () => {
     if (
-      !client.isReady()
+      client.isReady()
     ) {
-      return;
+      await voiceWatchdog();
     }
-
-    await voiceWatchdog();
-
   },
   VOICE_CHECK_INTERVAL
 );
 
-// =========================
-// SAVE TIME PERIODICALLY
-// =========================
+// ============================================================
+// SAVE HIGHEST TIME EVERY MINUTE
+// ============================================================
 
-// حفظ الرقم القياسي كل دقيقة
-// كحماية إضافية في حالة إغلاق مفاجئ
 setInterval(
   () => {
     if (
@@ -1022,29 +1131,26 @@ setInterval(
   60000
 );
 
-// =========================
+// ============================================================
 // HEARTBEAT
-// =========================
+// ============================================================
 
 setInterval(
-  async () => {
+  () => {
     if (
-      !client.isReady()
+      client.isReady()
     ) {
-      return;
+      console.log(
+        `💓 Heartbeat | ${cairoDate()}`
+      );
     }
-
-    console.log(
-      `💓 Heartbeat | ${cairoDate()}`
-    );
-
   },
   30 * 60 * 1000
 );
 
-// =========================
+// ============================================================
 // UNCAUGHT EXCEPTION
-// =========================
+// ============================================================
 
 process.on(
   'uncaughtException',
@@ -1055,18 +1161,18 @@ process.on(
     );
 
     try {
-      await sendErrorLog(error);
+      await logError(error);
     } catch {}
 
-    // مهم:
-    // نخلي PM2 يعيد تشغيل البوت
+    saveData();
+
     process.exit(1);
   }
 );
 
-// =========================
+// ============================================================
 // UNHANDLED REJECTION
-// =========================
+// ============================================================
 
 process.on(
   'unhandledRejection',
@@ -1077,14 +1183,14 @@ process.on(
     );
 
     try {
-      await sendErrorLog(reason);
+      await logError(reason);
     } catch {}
   }
 );
 
-// =========================
-// GRACEFUL SHUTDOWN
-// =========================
+// ============================================================
+// SHUTDOWN
+// ============================================================
 
 async function gracefulShutdown(
   signal
@@ -1096,10 +1202,10 @@ async function gracefulShutdown(
   shuttingDown = true;
 
   console.log(
-    `🛑 Received ${signal}`
+    `🛑 ${signal} received`
   );
 
-  // حفظ أعلى وقت قبل الإغلاق
+  // حفظ الوقت الحالي
   if (voiceJoinTime) {
     const currentTime =
       Date.now() -
@@ -1117,28 +1223,31 @@ async function gracefulShutdown(
       `البوت يتم إيقافه الآن.\n\n` +
       `📡 **Signal:** ${signal}\n` +
       `🕐 **الوقت:** ${cairoDate()}\n` +
-      `🏆 **أعلى وقت محفوظ:** ${formatDuration(
+      `🏆 **أعلى وقت:** ${formatDuration(
         highestVoiceTime
       )}`,
     color: 0xED4245
   });
 
   try {
-    const connection =
-      getVoiceConnection(
-        VOICE_GUILD_ID
+    if (reconnectTimer) {
+      clearTimeout(
+        reconnectTimer
       );
 
-    if (connection) {
-      connection.destroy();
+      reconnectTimer = null;
     }
   } catch {}
 
   try {
-    client.destroy();
+    destroyCurrentConnection();
   } catch {}
 
   saveData();
+
+  try {
+    client.destroy();
+  } catch {}
 
   process.exit(0);
 }
@@ -1146,26 +1255,19 @@ async function gracefulShutdown(
 process.on(
   'SIGINT',
   () =>
-    gracefulShutdown(
-      'SIGINT'
-    )
+    gracefulShutdown('SIGINT')
 );
 
-process.on
+process.on(
   'SIGTERM',
   () =>
-    gracefulShutdown(
-      'SIGTERM'
-    );
+    gracefulShutdown('SIGTERM')
+);
 
-// =========================
-// LOAD DATA
-// =========================
+// ============================================================
+// START
+// ============================================================
 
 loadData();
-
-// =========================
-// LOGIN
-// =========================
 
 client.login(TOKEN);
