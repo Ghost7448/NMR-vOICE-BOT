@@ -1,12 +1,18 @@
-'use strict';
+const path = require('path');
+const fs = require('fs');
 
-require('dotenv').config();
+require('dotenv').config({
+  path: path.join(__dirname, '.env')
+});
 
 const {
   Client,
   GatewayIntentBits,
+  Partials,
   Events,
-  EmbedBuilder
+  EmbedBuilder,
+  AuditLogEvent,
+  PermissionsBitField
 } = require('discord.js');
 
 const {
@@ -16,158 +22,247 @@ const {
   entersState
 } = require('@discordjs/voice');
 
-
 // ============================================================
+// NMR BOT - 24/7 VOICE + LOGS + STATUS
+// ============================================================
+
+// =========================
 // CONFIG
-// ============================================================
+// =========================
 
-const CONFIG = {
-  token: process.env.TOKEN,
+const TOKEN = process.env.TOKEN;
 
-  // Voice
-  voiceGuildId: process.env.VOICE_GUILD_ID,
-  voiceChannelId: process.env.VOICE_CHANNEL_ID,
+const VOICE_GUILD_ID = process.env.VOICE_GUILD_ID;
+const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID;
 
-  // Logs
-  logGuildId: process.env.LOG_GUILD_ID,
-  logChannelId: process.env.LOG_CHANNEL_ID,
+const LOG_GUILD_ID = process.env.LOG_GUILD_ID;
+const LOG_CHANNEL_ID = process.env.LOG_CHANNEL_ID;
 
-  // Status
-  statusChannelId: process.env.STATUS_CHANNEL_ID,
+const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID;
 
-  // Timers
-  voiceCheckInterval:
-    Number(process.env.VOICE_CHECK_INTERVAL) || 30000,
+const VOICE_CHECK_INTERVAL =
+  Number(process.env.VOICE_CHECK_INTERVAL) || 30000;
 
-  statusUpdateInterval:
-    Number(process.env.STATUS_UPDATE_INTERVAL) || 120000,
+const STATUS_UPDATE_INTERVAL =
+  Number(process.env.STATUS_UPDATE_INTERVAL) || 120000;
 
-  maxReconnectAttempts:
-    Number(process.env.MAX_RECONNECT_ATTEMPTS) || 5,
+const MAX_RECONNECT_ATTEMPTS =
+  Number(process.env.MAX_RECONNECT_ATTEMPTS) || 5;
 
-  reconnectDelay:
-    Number(process.env.RECONNECT_DELAY) || 5000
-};
+const RECONNECT_DELAY =
+  Number(process.env.RECONNECT_DELAY) || 5000;
 
+// =========================
+// DATA FILE
+// =========================
 
-// ============================================================
+const DATA_FILE = path.join(__dirname, 'data.json');
+
+let highestVoiceTime = 0;
+
+// تحميل أعلى وقت محفوظ
+function loadData() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      fs.writeFileSync(
+        DATA_FILE,
+        JSON.stringify(
+          {
+            highestVoiceTime: 0
+          },
+          null,
+          2
+        )
+      );
+
+      highestVoiceTime = 0;
+      return;
+    }
+
+    const raw = fs.readFileSync(DATA_FILE, 'utf8');
+
+    if (!raw.trim()) {
+      highestVoiceTime = 0;
+      return;
+    }
+
+    const data = JSON.parse(raw);
+
+    highestVoiceTime =
+      Number(data.highestVoiceTime) || 0;
+
+    console.log(
+      `💾 أعلى وقت محفوظ: ${formatDuration(highestVoiceTime)}`
+    );
+
+  } catch (error) {
+    console.error(
+      '❌ فشل تحميل data.json:',
+      error
+    );
+
+    highestVoiceTime = 0;
+  }
+}
+
+// حفظ أعلى وقت
+function saveData() {
+  try {
+    fs.writeFileSync(
+      DATA_FILE,
+      JSON.stringify(
+        {
+          highestVoiceTime
+        },
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+  } catch (error) {
+    console.error(
+      '❌ فشل حفظ data.json:',
+      error
+    );
+  }
+}
+
+// تحديث الرقم القياسي
+function updateHighestVoiceTime(currentTime) {
+  if (
+    Number.isFinite(currentTime) &&
+    currentTime > highestVoiceTime
+  ) {
+    highestVoiceTime = currentTime;
+
+    saveData();
+
+    console.log(
+      `🏆 رقم قياسي جديد: ${formatDuration(highestVoiceTime)}`
+    );
+
+    return true;
+  }
+
+  return false;
+}
+
+// =========================
 // VALIDATION
-// ============================================================
+// =========================
 
-const requiredEnv = [
-  ['TOKEN', CONFIG.token],
-  ['VOICE_GUILD_ID', CONFIG.voiceGuildId],
-  ['VOICE_CHANNEL_ID', CONFIG.voiceChannelId],
-  ['LOG_GUILD_ID', CONFIG.logGuildId],
-  ['LOG_CHANNEL_ID', CONFIG.logChannelId],
-  ['STATUS_CHANNEL_ID', CONFIG.statusChannelId]
-];
-
-const missing = requiredEnv
-  .filter(([name, value]) => !value)
-  .map(([name]) => name);
-
-if (missing.length > 0) {
-  console.error(
-    '\n❌ Missing environment variables:\n' +
-    missing.map(x => `- ${x}`).join('\n') +
-    '\n'
-  );
-
+if (!TOKEN) {
+  console.error('❌ TOKEN غير موجود في .env');
   process.exit(1);
 }
 
+if (!VOICE_GUILD_ID) {
+  console.error('❌ VOICE_GUILD_ID غير موجود في .env');
+  process.exit(1);
+}
 
-// ============================================================
+if (!VOICE_CHANNEL_ID) {
+  console.error('❌ VOICE_CHANNEL_ID غير موجود في .env');
+  process.exit(1);
+}
+
+if (!LOG_GUILD_ID) {
+  console.error('❌ LOG_GUILD_ID غير موجود في .env');
+  process.exit(1);
+}
+
+if (!LOG_CHANNEL_ID) {
+  console.error('❌ LOG_CHANNEL_ID غير موجود في .env');
+  process.exit(1);
+}
+
+if (!STATUS_CHANNEL_ID) {
+  console.error('❌ STATUS_CHANNEL_ID غير موجود في .env');
+  process.exit(1);
+}
+
+// =========================
 // CLIENT
-// ============================================================
+// =========================
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates
+  ],
+  partials: [
+    Partials.Channel
   ]
 });
 
+// =========================
+// VARIABLES
+// =========================
 
-// ============================================================
-// GLOBAL STATE
-// ============================================================
-
-let isReady = false;
-let isConnecting = false;
-
+let voiceJoinTime = null;
 let reconnectAttempts = 0;
-
-let voiceCheckTimer = null;
-let statusTimer = null;
-let heartbeatTimer = null;
+let reconnectTimer = null;
 
 let statusMessage = null;
 
+let shuttingDown = false;
 
-// ============================================================
-// VOICE SESSION TIME
-// ============================================================
+// منع إنشاء أكثر من اتصال في نفس الوقت
+let isConnecting = false;
 
-// بداية جلسة الفويس الحالية
-let voiceJoinTime = null;
+// =========================
+// FOOTER
+// =========================
 
-// أعلى وقت وصل له البوت أثناء تشغيل البرنامج
-let highestVoiceTime = 0;
+const FOOTER_GIF =
+  'https://i.postimg.cc/qRBtmgzD/download-20260819-160352.gif';
 
-
-// ============================================================
-// BOT START TIME
-// ============================================================
-
-let startTime = Date.now();
-
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function cairoDate() {
+  return new Date().toLocaleString('en-GB', {
+    timeZone: 'Africa/Cairo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
 }
 
-
-function truncate(text, max = 1000) {
-  if (!text) {
-    return 'Unknown';
-  }
-
-  text = String(text);
-
-  if (text.length <= max) {
-    return text;
-  }
-
-  return `${text.slice(0, max - 3)}...`;
+function applyFooter(embed) {
+  return embed.setFooter({
+    text: `𝓝𝓜𝓡 | ${cairoDate()}`,
+    iconURL: FOOTER_GIF
+  });
 }
 
+// =========================
+// FORMAT DURATION
+// =========================
 
-// ============================================================
-// FORMAT UPTIME
-// ============================================================
-
-function formatUptime(ms) {
-
+function formatDuration(ms) {
   if (!ms || ms < 0) {
     return '0 ثانية';
   }
 
-  let seconds = Math.floor(ms / 1000);
+  const totalSeconds = Math.floor(ms / 1000);
 
-  const days = Math.floor(seconds / 86400);
-  seconds %= 86400;
+  const days = Math.floor(
+    totalSeconds / 86400
+  );
 
-  const hours = Math.floor(seconds / 3600);
-  seconds %= 3600;
+  const hours = Math.floor(
+    (totalSeconds % 86400) / 3600
+  );
 
-  const minutes = Math.floor(seconds / 60);
-  seconds %= 60;
+  const minutes = Math.floor(
+    (totalSeconds % 3600) / 60
+  );
+
+  const seconds =
+    totalSeconds % 60;
 
   const parts = [];
 
@@ -183,92 +278,53 @@ function formatUptime(ms) {
     parts.push(`${minutes} دقيقة`);
   }
 
-  if (seconds > 0 || parts.length === 0) {
+  if (
+    seconds > 0 ||
+    parts.length === 0
+  ) {
     parts.push(`${seconds} ثانية`);
   }
 
   return parts.join(' و ');
 }
 
-
-// ============================================================
-// FORMAT EGYPT TIME
-// ============================================================
-
-function getEgyptDate() {
-
-  return new Date().toLocaleString(
-    'en-GB',
-    {
-      timeZone: 'Africa/Cairo',
-
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-
-      hour12: false
-    }
-  );
-}
-
-
-// ============================================================
+// =========================
 // GET LOG CHANNEL
-// ============================================================
+// =========================
 
 async function getLogChannel() {
-
   try {
-
     const guild =
       await client.guilds.fetch(
-        CONFIG.logGuildId
+        LOG_GUILD_ID
       );
 
     if (!guild) {
       console.error(
-        '❌ Log Guild not found.'
+        '❌ لم يتم العثور على LOG_GUILD_ID'
       );
 
       return null;
     }
-
 
     const channel =
       await guild.channels.fetch(
-        CONFIG.logChannelId
+        LOG_CHANNEL_ID
       );
-
 
     if (!channel) {
       console.error(
-        '❌ Log Channel not found.'
+        '❌ لم يتم العثور على LOG_CHANNEL_ID'
       );
 
       return null;
     }
-
-
-    if (!channel.isTextBased()) {
-
-      console.error(
-        '❌ Log Channel is not a text channel.'
-      );
-
-      return null;
-    }
-
 
     return channel;
 
   } catch (error) {
-
     console.error(
-      '❌ Failed to get log channel:',
+      '❌ خطأ في الحصول على روم اللوجات:',
       error
     );
 
@@ -276,1726 +332,840 @@ async function getLogChannel() {
   }
 }
 
-
-// ============================================================
-// GET STATUS CHANNEL
-// ============================================================
-
-async function getStatusChannel() {
-
-  try {
-
-    const guild =
-      await client.guilds.fetch(
-        CONFIG.logGuildId
-      );
-
-
-    if (!guild) {
-      return null;
-    }
-
-
-    const channel =
-      await guild.channels.fetch(
-        CONFIG.statusChannelId
-      );
-
-
-    if (!channel) {
-      console.error(
-        '❌ Status Channel not found.'
-      );
-
-      return null;
-    }
-
-
-    if (!channel.isTextBased()) {
-
-      console.error(
-        '❌ Status Channel is not a text channel.'
-      );
-
-      return null;
-    }
-
-
-    return channel;
-
-  } catch (error) {
-
-    console.error(
-      '❌ Failed to get status channel:',
-      error
-    );
-
-    return null;
-  }
-}
-
-
-// ============================================================
+// =========================
 // SEND LOG
-// ============================================================
+// =========================
 
 async function sendLog({
   title,
   description,
-  color = 0x5865F2,
-  fields = [],
-  level = 'INFO'
+  color = 0x5865F2
 }) {
-
-  console.log(
-    `[${new Date().toISOString()}] [${level}] ${title} - ${description}`
-  );
-
-
   try {
-
-    if (!client.isReady()) {
-      return;
-    }
-
-
     const channel =
       await getLogChannel();
 
-
     if (!channel) {
-      return;
+      return false;
     }
-
 
     const embed =
       new EmbedBuilder()
-
         .setTitle(title)
-
-        .setDescription(
-          truncate(description, 4000)
-        )
-
+        .setDescription(description)
         .setColor(color)
+        .setTimestamp();
 
-        .setTimestamp()
-
-        .setFooter({
-          text:
-            `𝓝𝓜𝓡 | ${getEgyptDate()}`,
-
-          iconURL:
-            'https://i.postimg.cc/qRBtmgzD/download-20260819-160352.gif'
-        });
-
-
-    if (fields.length > 0) {
-
-      embed.addFields(
-        fields.map(field => ({
-          name:
-            truncate(field.name, 256),
-
-          value:
-            truncate(field.value, 1024),
-
-          inline:
-            field.inline ?? false
-        }))
-      );
-    }
-
+    applyFooter(embed);
 
     await channel.send({
       embeds: [embed]
     });
 
+    return true;
 
   } catch (error) {
-
     console.error(
-      '❌ Failed to send log:',
+      '❌ فشل إرسال اللوج:',
       error
     );
+
+    return false;
   }
 }
 
+// =========================
+// START LOG
+// =========================
 
-// ============================================================
-// STARTUP LOG
-// ============================================================
-
-async function logStartup() {
-
+async function sendStartupLog() {
   await sendLog({
-
-    title:
-      '🟢 BOT STARTED',
-
+    title: '🟢 𝓝𝓜𝓡 BOT ONLINE',
     description:
-      'The bot has successfully started and is now monitoring the voice connection.',
-
-    color:
-      0x57F287,
-
-    fields: [
-
-      {
-        name:
-          '🤖 Bot',
-
-        value:
-          `${client.user.tag}`,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🆔 Bot ID',
-
-        value:
-          client.user.id,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🎧 Voice Channel',
-
-        value:
-          CONFIG.voiceChannelId,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🖥️ Node.js',
-
-        value:
-          process.version,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '📦 Discord.js',
-
-        value:
-          require('discord.js').version,
-
-        inline:
-          true
-      }
-
-    ],
-
-    level:
-      'STARTUP'
+      `البوت اشتغل بنجاح.\n\n` +
+      `🤖 **الحالة:** متصل\n` +
+      `🎙️ **Voice:** ${VOICE_CHANNEL_ID}\n` +
+      `🕐 **الوقت:** ${cairoDate()}`,
+    color: 0x57F287
   });
 }
 
+// =========================
+// RESTART LOG
+// =========================
 
-// ============================================================
-// VOICE CONNECTED LOG
-// ============================================================
-
-async function logVoiceConnected() {
-
+async function sendReconnectLog() {
   await sendLog({
-
-    title:
-      '🎧 VOICE CONNECTED',
-
+    title: '🔄 𝓝𝓜𝓡 BOT RECONNECT',
     description:
-      'The bot is now connected to the configured voice channel.',
-
-    color:
-      0x57F287,
-
-    fields: [
-
-      {
-        name:
-          '🎙️ Channel',
-
-        value:
-          CONFIG.voiceChannelId,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🏠 Guild',
-
-        value:
-          CONFIG.voiceGuildId,
-
-        inline:
-          true
-      }
-
-    ],
-
-    level:
-      'VOICE'
+      `تم إعادة اتصال البوت بالروم الصوتية.\n\n` +
+      `🤖 **الحالة:** متصل\n` +
+      `🎙️ **Voice Channel:** ${VOICE_CHANNEL_ID}\n` +
+      `🔁 **المحاولة:** ${reconnectAttempts}`,
+    color: 0xFEE75C
   });
 }
 
-
-// ============================================================
-// VOICE DISCONNECTED LOG
-// ============================================================
-
-async function logVoiceDisconnected(reason) {
-
-  await sendLog({
-
-    title:
-      '🔴 VOICE DISCONNECTED',
-
-    description:
-      reason,
-
-    color:
-      0xED4245,
-
-    level:
-      'VOICE'
-  });
-}
-
-
-// ============================================================
-// RECONNECT LOG
-// ============================================================
-
-async function logReconnect(reason) {
-
-  await sendLog({
-
-    title:
-      '🔄 VOICE RECONNECT',
-
-    description:
-      reason,
-
-    color:
-      0xFEE75C,
-
-    fields: [
-
-      {
-        name:
-          '🔢 Attempt',
-
-        value:
-          `${reconnectAttempts}/${CONFIG.maxReconnectAttempts}`,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🎧 Voice Channel',
-
-        value:
-          CONFIG.voiceChannelId,
-
-        inline:
-          true
-      }
-
-    ],
-
-    level:
-      'RECONNECT'
-  });
-}
-
-
-// ============================================================
+// =========================
 // ERROR LOG
-// ============================================================
+// =========================
 
-async function logError(title, error) {
-
+async function sendErrorLog(error) {
   await sendLog({
-
-    title:
-      `🚨 ${title}`,
-
+    title: '🔴 𝓝𝓜𝓡 BOT ERROR',
     description:
-      error?.stack ||
-      error?.message ||
-      String(error),
-
-    color:
-      0xED4245,
-
-    level:
-      'ERROR'
+      `حدث خطأ في البوت.\n\n` +
+      `\`\`\`\n${String(error).slice(
+        0,
+        3500
+      )}\n\`\`\``,
+    color: 0xED4245
   });
 }
 
+// =========================
+// STATUS CHANNEL
+// =========================
 
-// ============================================================
-// CONNECT TO VOICE
-// ============================================================
-
-async function connectToVoice() {
-
-  if (!client.isReady()) {
-    return false;
-  }
-
-
-  if (isConnecting) {
-    return false;
-  }
-
-
-  isConnecting = true;
-
-
+async function getStatusChannel() {
   try {
-
     const guild =
       await client.guilds.fetch(
-        CONFIG.voiceGuildId
+        LOG_GUILD_ID
       );
-
 
     if (!guild) {
-
-      throw new Error(
-        `Voice guild ${CONFIG.voiceGuildId} not found.`
-      );
+      return null;
     }
-
 
     const channel =
       await guild.channels.fetch(
-        CONFIG.voiceChannelId
+        STATUS_CHANNEL_ID
       );
 
-
-    if (!channel) {
-
-      throw new Error(
-        `Voice channel ${CONFIG.voiceChannelId} not found.`
-      );
-    }
-
-
-    if (!channel.isVoiceBased()) {
-
-      throw new Error(
-        `Channel ${CONFIG.voiceChannelId} is not a voice channel.`
-      );
-    }
-
-
-    // --------------------------------------------------------
-    // Existing connection
-    // --------------------------------------------------------
-
-    let connection =
-      getVoiceConnection(
-        CONFIG.voiceGuildId
-      );
-
-
-    if (connection) {
-
-      const state =
-        connection.state.status;
-
-
-      if (
-        state === VoiceConnectionStatus.Ready ||
-        state === VoiceConnectionStatus.Connecting ||
-        state === VoiceConnectionStatus.Signalling
-      ) {
-
-        isConnecting = false;
-
-        return true;
-      }
-
-
-      try {
-        connection.destroy();
-      } catch {}
-    }
-
-
-    // --------------------------------------------------------
-    // Join Voice
-    // --------------------------------------------------------
-
-    connection =
-      joinVoiceChannel({
-
-        channelId:
-          channel.id,
-
-        guildId:
-          guild.id,
-
-        adapterCreator:
-          guild.voiceAdapterCreator,
-
-        selfDeaf:
-          true,
-
-        selfMute:
-          true
-      });
-
-
-    // --------------------------------------------------------
-    // READY
-    // --------------------------------------------------------
-
-    connection.on(
-      VoiceConnectionStatus.Ready,
-      async () => {
-
-        reconnectAttempts = 0;
-
-        isConnecting = false;
-
-
-        // بداية جلسة جديدة
-        if (!voiceJoinTime) {
-
-          voiceJoinTime =
-            Date.now();
-        }
-
-
-        await logVoiceConnected();
-
-        await updateStatusEmbed();
-      }
-    );
-
-
-    // --------------------------------------------------------
-    // DISCONNECTED
-    // --------------------------------------------------------
-
-    connection.on(
-      VoiceConnectionStatus.Disconnected,
-      async () => {
-
-        // نحسب أعلى وقت قبل تصفير الجلسة
-        if (voiceJoinTime) {
-
-          const sessionTime =
-            Date.now() - voiceJoinTime;
-
-
-          if (sessionTime > highestVoiceTime) {
-
-            highestVoiceTime =
-              sessionTime;
-          }
-        }
-
-
-        voiceJoinTime = null;
-
-
-        await updateStatusEmbed();
-
-
-        await logVoiceDisconnected(
-          'Discord voice connection was disconnected.'
-        );
-
-
-        isConnecting = false;
-
-
-        try {
-
-          await entersState(
-            connection,
-            VoiceConnectionStatus.Signalling,
-            5000
-          );
-
-        } catch {
-
-          try {
-            connection.destroy();
-          } catch {}
-
-
-          scheduleReconnect(
-            'Voice connection could not recover automatically.'
-          );
-        }
-      }
-    );
-
-
-    // --------------------------------------------------------
-    // DESTROYED
-    // --------------------------------------------------------
-
-    connection.on(
-      VoiceConnectionStatus.Destroyed,
-      async () => {
-
-        if (voiceJoinTime) {
-
-          const sessionTime =
-            Date.now() - voiceJoinTime;
-
-
-          if (sessionTime > highestVoiceTime) {
-
-            highestVoiceTime =
-              sessionTime;
-          }
-        }
-
-
-        voiceJoinTime = null;
-
-        isConnecting = false;
-
-        await updateStatusEmbed();
-
-
-        scheduleReconnect(
-          'Voice connection was destroyed.'
-        );
-      }
-    );
-
-
-    // --------------------------------------------------------
-    // ERROR
-    // --------------------------------------------------------
-
-    connection.on(
-      'error',
-      async error => {
-
-        await logError(
-          'VOICE CONNECTION ERROR',
-          error
-        );
-
-
-        isConnecting = false;
-
-
-        scheduleReconnect(
-          'Voice connection emitted an error.'
-        );
-      }
-    );
-
-
-    // --------------------------------------------------------
-    // WAIT FOR READY
-    // --------------------------------------------------------
-
-    await entersState(
-      connection,
-      VoiceConnectionStatus.Ready,
-      20000
-    );
-
-
-    reconnectAttempts = 0;
-
-    isConnecting = false;
-
-
-    if (!voiceJoinTime) {
-      voiceJoinTime = Date.now();
-    }
-
-
-    return true;
-
+    return channel || null;
 
   } catch (error) {
-
-    isConnecting = false;
-
-
-    await logError(
-      'VOICE CONNECTION FAILED',
+    console.error(
+      '❌ خطأ في الحصول على روم الحالة:',
       error
     );
 
-
-    scheduleReconnect(
-      `Failed to connect to voice: ${error.message}`
-    );
-
-
-    return false;
+    return null;
   }
 }
 
+// =========================
+// BUILD STATUS EMBED
+// =========================
 
-// ============================================================
-// RECONNECT SYSTEM
-// ============================================================
+function buildStatusEmbed() {
+  const now =
+    Date.now();
 
-async function scheduleReconnect(reason) {
+  const currentVoiceTime =
+    voiceJoinTime
+      ? now - voiceJoinTime
+      : 0;
 
-  if (!client.isReady()) {
-    return;
-  }
-
-
-  if (isConnecting) {
-    return;
-  }
-
-
-  if (
-    reconnectAttempts >=
-    CONFIG.maxReconnectAttempts
-  ) {
-
-    reconnectAttempts = 0;
-
-
-    await sendLog({
-
-      title:
-        '⚠️ RECONNECT LIMIT',
-
-      description:
-        'Maximum reconnect attempts reached. The watchdog will continue checking the connection.',
-
-      color:
-        0xFEE75C,
-
-      level:
-        'RECONNECT'
-    });
-
-
-    return;
-  }
-
-
-  reconnectAttempts++;
-
-
-  await logReconnect(
-    reason
+  // تحديث أعلى وقت قبل بناء الـEmbed
+  updateHighestVoiceTime(
+    currentVoiceTime
   );
 
+  const embed =
+    new EmbedBuilder()
+      .setTitle('𝓝𝓜𝓡 𝓑𝓞𝓣')
+      .setDescription(
+        '```ansi\n' +
+        '🟢 البوت يعمل بشكل طبيعي\n' +
+        '```'
+      )
+      .setColor(0x57F287)
+      .addFields(
+        {
+          name: '🤖 حالة البوت',
+          value: '🟢 **متصل**',
+          inline: true
+        },
+        {
+          name: '🎙️ الروم الصوتية',
+          value: `<#${VOICE_CHANNEL_ID}>`,
+          inline: true
+        },
+        {
+          name: '⏱️ الوقت الحالي',
+          value:
+            `\`${formatDuration(
+              currentVoiceTime
+            )}\``,
+          inline: false
+        },
+        {
+          name: '🏆 أعلى وقت للبوت',
+          value:
+            `\`${formatDuration(
+              highestVoiceTime
+            )}\``,
+          inline: false
+        }
+      )
+      .setTimestamp();
 
-  await sleep(
-    CONFIG.reconnectDelay
-  );
+  applyFooter(embed);
 
-
-  await connectToVoice();
+  return embed;
 }
 
+// =========================
+// FIND OLD STATUS MESSAGE
+// =========================
 
-// ============================================================
-// VOICE WATCHDOG
-// ============================================================
-
-async function checkVoiceConnection() {
-
-  if (!client.isReady()) {
-    return;
-  }
-
-
+async function findOldStatusMessage(
+  channel
+) {
   try {
-
-    const connection =
-      getVoiceConnection(
-        CONFIG.voiceGuildId
-      );
-
-
-    if (!connection) {
-
-      await sendLog({
-
-        title:
-          '⚠️ VOICE CONNECTION MISSING',
-
-        description:
-          'No voice connection exists. Reconnecting...',
-
-        color:
-          0xFEE75C,
-
-        level:
-          'WATCHDOG'
-      });
-
-
-      await connectToVoice();
-
-      return;
-    }
-
-
-    const status =
-      connection.state.status;
-
-
-    if (
-      status === VoiceConnectionStatus.Ready ||
-      status === VoiceConnectionStatus.Connecting ||
-      status === VoiceConnectionStatus.Signalling
-    ) {
-
-      return;
-    }
-
-
-    await sendLog({
-
-      title:
-        '⚠️ VOICE WATCHDOG',
-
-      description:
-        `Unexpected voice connection state: ${status}. Reconnecting...`,
-
-      color:
-        0xFEE75C,
-
-      level:
-        'WATCHDOG'
-    });
-
-
-    try {
-      connection.destroy();
-    } catch {}
-
-
-    await connectToVoice();
-
-
-  } catch (error) {
-
-    await logError(
-      'VOICE WATCHDOG ERROR',
-      error
-    );
-  }
-}
-
-
-// ============================================================
-// GET CURRENT VOICE TIME
-// ============================================================
-
-function getCurrentVoiceTime() {
-
-  if (!voiceJoinTime) {
-    return 0;
-  }
-
-
-  return Date.now() - voiceJoinTime;
-}
-
-
-// ============================================================
-// UPDATE HIGHEST TIME
-// ============================================================
-
-function updateHighestVoiceTime() {
-
-  const current =
-    getCurrentVoiceTime();
-
-
-  if (
-    current > highestVoiceTime
-  ) {
-
-    highestVoiceTime =
-      current;
-  }
-}
-
-
-// ============================================================
-// UPDATE STATUS EMBED
-// ============================================================
-
-async function updateStatusEmbed() {
-
-  if (!client.isReady()) {
-    return;
-  }
-
-
-  try {
-
-    const channel =
-      await getStatusChannel();
-
-
-    if (!channel) {
-      return;
-    }
-
-
-    const connection =
-      getVoiceConnection(
-        CONFIG.voiceGuildId
-      );
-
-
-    const isConnected =
-      connection &&
-      connection.state.status ===
-      VoiceConnectionStatus.Ready;
-
-
-    // --------------------------------------------------------
-    // Time
-    // --------------------------------------------------------
-
-    updateHighestVoiceTime();
-
-
-    const currentVoiceTime =
-      isConnected
-        ? getCurrentVoiceTime()
-        : 0;
-
-
-    // --------------------------------------------------------
-    // Voice Name
-    // --------------------------------------------------------
-
-    let voiceName =
-      'غير متصل';
-
-
-    if (isConnected) {
-
-      try {
-
-        const guild =
-          await client.guilds.fetch(
-            CONFIG.voiceGuildId
-          );
-
-
-        const channelData =
-          await guild.channels.fetch(
-            CONFIG.voiceChannelId
-          );
-
-
-        voiceName =
-          channelData?.name ||
-          'Unknown Voice';
-
-
-      } catch {
-
-        voiceName =
-          'Unknown Voice';
-      }
-    }
-
-
-    // --------------------------------------------------------
-    // Status
-    // --------------------------------------------------------
-
-    const statusText =
-      isConnected
-        ? '🟢 متصل'
-        : '🔴 غير متصل';
-
-
-    // --------------------------------------------------------
-    // Embed
-    // --------------------------------------------------------
-
-    const embed =
-      new EmbedBuilder()
-
-        .setTitle(
-          '𝓝𝓜𝓡 𝓑𝓞𝓣'
-        )
-
-        .setDescription(
-          '📊 **حالة البوت ومراقبة مدة الاتصال بالفويس**'
-        )
-
-        .setColor(
-          isConnected
-            ? 0x57F287
-            : 0xED4245
-        )
-
-        .addFields(
-
-          {
-            name:
-              '📡 حالة البوت',
-
-            value:
-              `\`\`\`\n${statusText}\n\`\`\``,
-
-            inline:
-              false
-          },
-
-          {
-            name:
-              '🎧 اسم الفويس',
-
-            value:
-              `\`${voiceName}\``,
-
-            inline:
-              true
-          },
-
-          {
-            name:
-              '⏱️ وقت البوت الحالي',
-
-            value:
-              `\`${formatUptime(
-                currentVoiceTime
-              )}\``,
-
-            inline:
-              true
-          },
-
-          {
-            name:
-              '🏆 أعلى وقت قعده البوت',
-
-            value:
-              `\`${formatUptime(
-                highestVoiceTime
-              )}\``,
-
-            inline:
-              false
-          }
-
-        )
-
-        .setFooter({
-
-          text:
-            `𝓝𝓜𝓡 | ${getEgyptDate()}`,
-
-          iconURL:
-            'https://i.postimg.cc/qRBtmgzD/download-20260819-160352.gif'
-        })
-
-        .setTimestamp();
-
-
-    // --------------------------------------------------------
-    // Edit Existing Message
-    // --------------------------------------------------------
-
-    if (statusMessage) {
-
-      try {
-
-        await statusMessage.edit({
-          embeds: [embed]
-        });
-
-        return;
-
-      } catch {
-
-        statusMessage = null;
-      }
-    }
-
-
-    // --------------------------------------------------------
-    // Search Existing Status Message
-    // --------------------------------------------------------
-
     const messages =
       await channel.messages.fetch({
         limit: 20
       });
 
-
     const oldMessage =
-      messages.find(
-        message =>
+      messages.find(message => {
+        if (
+          message.author.id !==
+          client.user.id
+        ) {
+          return false;
+        }
 
-          message.author.id ===
-            client.user.id &&
-
-          message.embeds?.[0]?.title ===
+        return message.embeds.some(
+          embed =>
+            embed.title ===
             '𝓝𝓜𝓡 𝓑𝓞𝓣'
-      );
-
-
-    if (oldMessage) {
-
-      statusMessage =
-        oldMessage;
-
-
-      await statusMessage.edit({
-        embeds: [embed]
+        );
       });
 
+    return oldMessage || null;
+
+  } catch (error) {
+    console.error(
+      '❌ فشل البحث عن رسالة الحالة:',
+      error
+    );
+
+    return null;
+  }
+}
+
+// =========================
+// UPDATE STATUS
+// =========================
+
+async function updateStatus() {
+  try {
+    const channel =
+      await getStatusChannel();
+
+    if (!channel) {
+      console.error(
+        '❌ STATUS_CHANNEL_ID غير موجود أو غير متاح'
+      );
 
       return;
     }
 
+    const embed =
+      buildStatusEmbed();
 
-    // --------------------------------------------------------
-    // Create New Status Message
-    // --------------------------------------------------------
+    if (
+      statusMessage &&
+      statusMessage.id
+    ) {
+      try {
+        statusMessage =
+          await statusMessage.edit({
+            embeds: [embed]
+          });
+
+        return;
+
+      } catch {
+        statusMessage = null;
+      }
+    }
+
+    const oldMessage =
+      await findOldStatusMessage(
+        channel
+      );
+
+    if (oldMessage) {
+      try {
+        statusMessage =
+          await oldMessage.edit({
+            embeds: [embed]
+          });
+
+        return;
+
+      } catch {
+        statusMessage = null;
+      }
+    }
 
     statusMessage =
       await channel.send({
         embeds: [embed]
       });
 
-
   } catch (error) {
-
     console.error(
-      '❌ Status update failed:',
+      '❌ فشل تحديث Status:',
       error
     );
   }
 }
 
+// =========================
+// CONNECT TO VOICE
+// =========================
 
-// ============================================================
-// HEARTBEAT
-// ============================================================
-
-async function sendHeartbeat() {
-
-  if (!client.isReady()) {
+async function connectToVoice() {
+  if (shuttingDown) {
     return;
   }
 
+  if (isConnecting) {
+    return;
+  }
 
-  const connection =
-    getVoiceConnection(
-      CONFIG.voiceGuildId
+  isConnecting = true;
+
+  try {
+    const guild =
+      await client.guilds.fetch(
+        VOICE_GUILD_ID
+      );
+
+    if (!guild) {
+      throw new Error(
+        'Voice Guild not found'
+      );
+    }
+
+    const channel =
+      await guild.channels.fetch(
+        VOICE_CHANNEL_ID
+      );
+
+    if (!channel) {
+      throw new Error(
+        'Voice Channel not found'
+      );
+    }
+
+    const existingConnection =
+      getVoiceConnection(
+        VOICE_GUILD_ID
+      );
+
+    if (existingConnection) {
+      try {
+        existingConnection.destroy();
+      } catch {}
+    }
+
+    console.log(
+      `🎙️ Connecting to: ${channel.name}`
     );
 
+    const connection =
+      joinVoiceChannel({
+        channelId:
+          VOICE_CHANNEL_ID,
+        guildId:
+          VOICE_GUILD_ID,
+        adapterCreator:
+          guild.voiceAdapterCreator,
+        selfDeaf: true,
+        selfMute: false
+      });
 
-  const voiceStatus =
-    connection?.state?.status ||
-    'NOT_CONNECTED';
+    await entersState(
+      connection,
+      VoiceConnectionStatus.Ready,
+      30000
+    );
 
-
-  await sendLog({
-
-    title:
-      '💓 BOT HEARTBEAT',
-
-    description:
-      'Bot is alive and monitoring the voice connection.',
-
-    color:
-      0x5865F2,
-
-    fields: [
-
-      {
-        name:
-          '⏱️ Bot Uptime',
-
-        value:
-          formatUptime(
-            Date.now() - startTime
-          ),
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🎧 Voice Status',
-
-        value:
-          voiceStatus,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '📡 Ping',
-
-        value:
-          `${client.ws.ping}ms`,
-
-        inline:
-          true
-      },
-
-      {
-        name:
-          '🏆 Highest Voice Time',
-
-        value:
-          formatUptime(
-            highestVoiceTime
-          ),
-
-        inline:
-          false
-      }
-
-    ],
-
-    level:
-      'HEARTBEAT'
-  });
-}
-
-
-// ============================================================
-// READY EVENT
-// ============================================================
-
-client.once(
-  Events.ClientReady,
-  async readyClient => {
-
-    isReady = true;
-
-    startTime =
+    // بداية جلسة جديدة
+    voiceJoinTime =
       Date.now();
 
+    reconnectAttempts = 0;
 
     console.log(
-      '\n========================================'
+      `✅ Connected to ${channel.name}`
     );
 
-    console.log(
-      `🟢 Logged in as ${readyClient.user.tag}`
+    await sendReconnectLog();
+
+    await updateStatus();
+
+    // Ready
+    connection.on(
+      VoiceConnectionStatus.Ready,
+      () => {
+        console.log(
+          '🟢 Voice connection READY'
+        );
+      }
     );
 
-    console.log(
-      `🎧 Voice Channel: ${CONFIG.voiceChannelId}`
+    // Disconnected
+    connection.on(
+      VoiceConnectionStatus.Disconnected,
+      async () => {
+        if (shuttingDown) {
+          return;
+        }
+
+        console.log(
+          '🟡 Voice connection DISCONNECTED'
+        );
+
+        await sendLog({
+          title:
+            '🟡 𝓝𝓜𝓡 VOICE DISCONNECTED',
+          description:
+            `البوت فقد الاتصال بالروم الصوتية.\n\n` +
+            `🔄 جاري محاولة إعادة الاتصال...`,
+          color: 0xFEE75C
+        });
+
+        scheduleReconnect();
+      }
     );
 
-    console.log(
-      `📋 Log Channel: ${CONFIG.logChannelId}`
+    // Destroyed
+    connection.on(
+      VoiceConnectionStatus.Destroyed,
+      () => {
+        if (shuttingDown) {
+          return;
+        }
+
+        console.log(
+          '🔴 Voice connection DESTROYED'
+        );
+
+        scheduleReconnect();
+      }
     );
 
-    console.log(
-      `📊 Status Channel: ${CONFIG.statusChannelId}`
+    connection.on(
+      'error',
+      async error => {
+        console.error(
+          '❌ Voice error:',
+          error
+        );
+
+        await sendErrorLog(
+          error
+        );
+      }
     );
 
-    console.log(
-      '========================================\n'
-    );
-
-
-    // --------------------------------------------------------
-    // Startup Log
-    // --------------------------------------------------------
-
-    await logStartup();
-
-
-    // --------------------------------------------------------
-    // Connect Voice
-    // --------------------------------------------------------
-
-    await connectToVoice();
-
-
-    // --------------------------------------------------------
-    // Initial Status
-    // --------------------------------------------------------
-
-    await updateStatusEmbed();
-
-
-    // --------------------------------------------------------
-    // Voice Watchdog
-    // --------------------------------------------------------
-
-    voiceCheckTimer =
-      setInterval(
-        checkVoiceConnection,
-        CONFIG.voiceCheckInterval
-      );
-
-
-    // --------------------------------------------------------
-    // Status Update
-    // --------------------------------------------------------
-
-    statusTimer =
-      setInterval(
-        updateStatusEmbed,
-        CONFIG.statusUpdateInterval
-      );
-
-
-    // --------------------------------------------------------
-    // Heartbeat
-    // --------------------------------------------------------
-
-    heartbeatTimer =
-      setInterval(
-        sendHeartbeat,
-        30 * 60 * 1000
-      );
-  }
-);
-
-
-// ============================================================
-// DISCORD CLIENT ERROR
-// ============================================================
-
-client.on(
-  Events.Error,
-  async error => {
-
+  } catch (error) {
     console.error(
-      'Discord Client Error:',
+      '❌ Voice connection failed:',
       error
     );
 
+    await sendErrorLog(error);
 
-    await logError(
-      'DISCORD CLIENT ERROR',
+    scheduleReconnect();
+
+  } finally {
+    isConnecting = false;
+  }
+}
+
+// =========================
+// RECONNECT
+// =========================
+
+function scheduleReconnect() {
+  if (shuttingDown) {
+    return;
+  }
+
+  if (reconnectTimer) {
+    return;
+  }
+
+  if (
+    reconnectAttempts >=
+    MAX_RECONNECT_ATTEMPTS
+  ) {
+    console.error(
+      '❌ تم الوصول للحد الأقصى لمحاولات الاتصال'
+    );
+
+    reconnectAttempts = 0;
+  }
+
+  reconnectAttempts++;
+
+  console.log(
+    `🔄 Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`
+  );
+
+  reconnectTimer =
+    setTimeout(async () => {
+      reconnectTimer = null;
+
+      await connectToVoice();
+    }, RECONNECT_DELAY);
+}
+
+// =========================
+// VOICE WATCHDOG
+// =========================
+
+async function voiceWatchdog() {
+  if (shuttingDown) {
+    return;
+  }
+
+  try {
+    const guild =
+      await client.guilds.fetch(
+        VOICE_GUILD_ID
+      );
+
+    if (!guild) {
+      return;
+    }
+
+    const me =
+      await guild.members.fetch(
+        client.user.id
+      );
+
+    const voiceChannel =
+      me.voice.channel;
+
+    // البوت مش داخل الروم المطلوبة
+    if (
+      !voiceChannel ||
+      voiceChannel.id !==
+        VOICE_CHANNEL_ID
+    ) {
+      console.log(
+        '⚠️ البوت مش داخل الروم المطلوبة - جاري الاتصال...'
+      );
+
+      await connectToVoice();
+    }
+
+  } catch (error) {
+    console.error(
+      '❌ Watchdog error:',
       error
     );
   }
-);
+}
 
-
-// ============================================================
-// DISCORD WARNING
-// ============================================================
-
-client.on(
-  Events.Warn,
-  async warning => {
-
-    console.warn(
-      'Discord Warning:',
-      warning
-    );
-
-
-    await sendLog({
-
-      title:
-        '⚠️ DISCORD WARNING',
-
-      description:
-        warning,
-
-      color:
-        0xFEE75C,
-
-      level:
-        'WARNING'
-    });
-  }
-);
-
-
-// ============================================================
+// =========================
 // VOICE STATE UPDATE
-// ============================================================
+// =========================
 
 client.on(
   Events.VoiceStateUpdate,
   async (oldState, newState) => {
-
-    if (!client.user) {
-      return;
-    }
-
-
-    // نهتم بالبوت فقط
     if (
-      newState.id !==
-      client.user.id
+      !client.user ||
+      oldState.id !==
+        client.user.id
     ) {
       return;
     }
 
+    if (shuttingDown) {
+      return;
+    }
 
-    // --------------------------------------------------------
-    // Bot Joined Configured Voice
-    // --------------------------------------------------------
+    const oldChannel =
+      oldState.channelId;
+
+    const newChannel =
+      newState.channelId;
 
     if (
-      newState.channelId ===
-      CONFIG.voiceChannelId
+      oldChannel !==
+        VOICE_CHANNEL_ID ||
+      newChannel !==
+        VOICE_CHANNEL_ID
     ) {
+      if (
+        newChannel !==
+        VOICE_CHANNEL_ID
+      ) {
+        console.log(
+          '⚠️ البوت خرج من الروم الصوتية'
+        );
 
-      if (!voiceJoinTime) {
+        await sendLog({
+          title:
+            '⚠️ 𝓝𝓜𝓡 BOT LEFT VOICE',
+          description:
+            `البوت خرج من الروم الصوتية.\n\n` +
+            `🔄 جاري إعادته تلقائيًا...`,
+          color: 0xFEE75C
+        });
 
-        voiceJoinTime =
-          Date.now();
+        scheduleReconnect();
       }
-
-
-      updateHighestVoiceTime();
-
-      await updateStatusEmbed();
-
-      return;
-    }
-
-
-    // --------------------------------------------------------
-    // Bot Left Configured Voice
-    // --------------------------------------------------------
-
-    if (
-      oldState.channelId ===
-        CONFIG.voiceChannelId &&
-
-      newState.channelId !==
-        CONFIG.voiceChannelId
-    ) {
-
-
-      // حفظ مدة الجلسة
-      updateHighestVoiceTime();
-
-
-      voiceJoinTime =
-        null;
-
-
-      await sendLog({
-
-        title:
-          '🚪 BOT LEFT VOICE',
-
-        description:
-          'The bot is no longer inside the configured voice channel. Reconnecting...',
-
-        color:
-          0xED4245,
-
-        fields: [
-
-          {
-            name:
-              'Old Channel',
-
-            value:
-              oldState.channelId ||
-              'None',
-
-            inline:
-              true
-          },
-
-          {
-            name:
-              'New Channel',
-
-            value:
-              newState.channelId ||
-              'None',
-
-            inline:
-              true
-          },
-
-          {
-            name:
-              '🏆 Highest Voice Time',
-
-            value:
-              formatUptime(
-                highestVoiceTime
-              ),
-
-            inline:
-              false
-          }
-
-        ],
-
-        level:
-          'VOICE'
-      });
-
-
-      await updateStatusEmbed();
-
-
-      await sleep(2000);
-
-
-      await connectToVoice();
     }
   }
 );
 
+// =========================
+// READY
+// =========================
 
-// ============================================================
+client.once(
+  Events.ClientReady,
+  async readyClient => {
+    console.log(
+      '============================================'
+    );
+
+    console.log(
+      `🤖 Logged in as ${readyClient.user.tag}`
+    );
+
+    console.log(
+      `🆔 ${readyClient.user.id}`
+    );
+
+    console.log(
+      '============================================'
+    );
+
+    await sendStartupLog();
+
+    await connectToVoice();
+
+    await updateStatus();
+  }
+);
+
+// =========================
+// STATUS INTERVAL
+// =========================
+
+setInterval(
+  async () => {
+    if (
+      !client.isReady()
+    ) {
+      return;
+    }
+
+    await updateStatus();
+
+  },
+  STATUS_UPDATE_INTERVAL
+);
+
+// =========================
+// VOICE CHECK INTERVAL
+// =========================
+
+setInterval(
+  async () => {
+    if (
+      !client.isReady()
+    ) {
+      return;
+    }
+
+    await voiceWatchdog();
+
+  },
+  VOICE_CHECK_INTERVAL
+);
+
+// =========================
+// SAVE TIME PERIODICALLY
+// =========================
+
+// حفظ الرقم القياسي كل دقيقة
+// كحماية إضافية في حالة إغلاق مفاجئ
+setInterval(
+  () => {
+    if (
+      voiceJoinTime
+    ) {
+      const currentTime =
+        Date.now() -
+        voiceJoinTime;
+
+      updateHighestVoiceTime(
+        currentTime
+      );
+    }
+  },
+  60000
+);
+
+// =========================
+// HEARTBEAT
+// =========================
+
+setInterval(
+  async () => {
+    if (
+      !client.isReady()
+    ) {
+      return;
+    }
+
+    console.log(
+      `💓 Heartbeat | ${cairoDate()}`
+    );
+
+  },
+  30 * 60 * 1000
+);
+
+// =========================
 // UNCAUGHT EXCEPTION
-// ============================================================
+// =========================
 
 process.on(
   'uncaughtException',
   async error => {
-
     console.error(
-      '🔥 UNCAUGHT EXCEPTION:',
+      '💥 UNCAUGHT EXCEPTION:',
       error
     );
 
-
     try {
-
-      await logError(
-        'UNCAUGHT EXCEPTION',
-        error
-      );
-
+      await sendErrorLog(error);
     } catch {}
 
-
-    /*
-      PM2 is responsible for restarting
-      the process if Node terminates.
-    */
+    // مهم:
+    // نخلي PM2 يعيد تشغيل البوت
+    process.exit(1);
   }
 );
 
-
-// ============================================================
+// =========================
 // UNHANDLED REJECTION
-// ============================================================
+// =========================
 
 process.on(
   'unhandledRejection',
   async reason => {
-
     console.error(
-      '🔥 UNHANDLED REJECTION:',
+      '💥 UNHANDLED REJECTION:',
       reason
     );
 
-
     try {
-
-      await logError(
-        'UNHANDLED PROMISE REJECTION',
-
-        reason instanceof Error
-          ? reason
-          : new Error(
-              String(reason)
-            )
-      );
-
+      await sendErrorLog(reason);
     } catch {}
   }
 );
 
-
-// ============================================================
+// =========================
 // GRACEFUL SHUTDOWN
-// ============================================================
+// =========================
 
-async function gracefulShutdown(signal) {
+async function gracefulShutdown(
+  signal
+) {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
 
   console.log(
-    `\n🛑 Received ${signal}. Shutting down...`
+    `🛑 Received ${signal}`
   );
 
+  // حفظ أعلى وقت قبل الإغلاق
+  if (voiceJoinTime) {
+    const currentTime =
+      Date.now() -
+      voiceJoinTime;
+
+    updateHighestVoiceTime(
+      currentTime
+    );
+  }
+
+  await sendLog({
+    title:
+      '🛑 𝓝𝓜𝓡 BOT SHUTDOWN',
+    description:
+      `البوت يتم إيقافه الآن.\n\n` +
+      `📡 **Signal:** ${signal}\n` +
+      `🕐 **الوقت:** ${cairoDate()}\n` +
+      `🏆 **أعلى وقت محفوظ:** ${formatDuration(
+        highestVoiceTime
+      )}`,
+    color: 0xED4245
+  });
 
   try {
-
-    await sendLog({
-
-      title:
-        '🔴 BOT STOPPING',
-
-      description:
-        `The bot is shutting down because it received ${signal}.`,
-
-      color:
-        0xED4245,
-
-      fields: [
-
-        {
-          name:
-            '⏱️ Bot Uptime',
-
-          value:
-            formatUptime(
-              Date.now() - startTime
-            ),
-
-          inline:
-            true
-        },
-
-        {
-          name:
-            '🏆 Highest Voice Time',
-
-          value:
-            formatUptime(
-              highestVoiceTime
-            ),
-
-          inline:
-            true
-        }
-
-      ],
-
-      level:
-        'SHUTDOWN'
-    });
-
-  } catch {}
-
-
-  // Stop timers
-
-  if (voiceCheckTimer) {
-    clearInterval(
-      voiceCheckTimer
-    );
-  }
-
-
-  if (statusTimer) {
-    clearInterval(
-      statusTimer
-    );
-  }
-
-
-  if (heartbeatTimer) {
-    clearInterval(
-      heartbeatTimer
-    );
-  }
-
-
-  // Destroy voice connection
-
-  try {
-
     const connection =
       getVoiceConnection(
-        CONFIG.voiceGuildId
+        VOICE_GUILD_ID
       );
-
 
     if (connection) {
       connection.destroy();
     }
-
   } catch {}
-
-
-  // Destroy Discord client
 
   try {
     client.destroy();
   } catch {}
 
-
-  isReady = false;
-
+  saveData();
 
   process.exit(0);
 }
 
-
-// ============================================================
-// SIGNALS
-// ============================================================
+process.on(
+  'SIGINT',
+  () =>
+    gracefulShutdown(
+      'SIGINT'
+    )
+);
 
 process.on(
   'SIGTERM',
-  () => gracefulShutdown('SIGTERM')
-);
-
-
-process.on(
-  'SIGINT',
-  () => gracefulShutdown('SIGINT')
-);
-
-
-// ============================================================
-// LOGIN
-// ============================================================
-
-console.log(
-  '🚀 Starting NMR Voice Bot...'
-);
-
-
-client.login(
-  CONFIG.token
-).catch(
-  async error => {
-
-    console.error(
-      '❌ Discord login failed:',
-      error
+  () =>
+    gracefulShutdown(
+      'SIGTERM'
     );
 
+// =========================
+// LOAD DATA
+// =========================
 
-    /*
-      PM2 will restart the process.
-    */
+loadData();
 
-    process.exit(1);
-  }
-);
+// =========================
+// LOGIN
+// =========================
+
+client.login(TOKEN);
