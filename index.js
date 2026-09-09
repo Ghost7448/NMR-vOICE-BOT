@@ -478,7 +478,7 @@ function buildStatusEmbed() {
       .setTitle('𝓝𝓜𝓡 𝓑𝓞𝓣')
       .setDescription(
         '```ansi\n' +
-        '🟢 البوت يعمل بشكل طبيعي\n' +
+        '🟢 Connected\n' +
         '```'
       )
       .setColor(0x57F287)
@@ -1151,7 +1151,7 @@ process.on(
     )
 );
 
-process.on(
+process.on
   'SIGTERM',
   () =>
     gracefulShutdown(
