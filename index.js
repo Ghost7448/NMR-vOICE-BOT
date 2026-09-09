@@ -614,7 +614,7 @@ function buildStatusEmbed() {
 
       .setDescription(
         '```ansi\n' +
-        '🟢 البوت يعمل بشكل طبيعي\n' +
+        '🟢 Connected\n' +
         '```'
       )
 
@@ -623,17 +623,17 @@ function buildStatusEmbed() {
       .addFields(
         {
           name:
-            '🤖 حالة البوت',
+            '🤖 BOT Status',
 
           value:
-            '🟢 **متصل**',
+            '🟢 **Online**',
 
           inline: true
         },
 
         {
           name:
-            '🎙️ الروم الصوتية',
+            '🎙️ Voice Room',
 
           value:
             `<#${VOICE_CHANNEL_ID}>`,
