@@ -492,14 +492,14 @@ function buildStatusEmbed() {
       .setTitle('𝓝𝓡𝓜 𝓑𝓞𝓣')
       .setDescription(
         '```ansi\n' +
-        '🟢 البوت يعمل بشكل طبيعي\n' +
+        '🟢 Connected\n' +
         '```'
       )
       .setColor(0x57F287)
       .addFields(
         {
           name: '🤖 حالة البوت',
-          value: '🟢 **متصل**',
+          value: '🟢 **Online**',
           inline: true
         },
         {
