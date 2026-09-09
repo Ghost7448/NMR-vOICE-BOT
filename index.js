@@ -10,7 +10,9 @@ const {
   GatewayIntentBits,
   Partials,
   Events,
-  EmbedBuilder
+  EmbedBuilder,
+  SlashCommandBuilder,
+  PermissionFlagsBits
 } = require('discord.js');
 
 const {
@@ -23,6 +25,7 @@ const {
 // ============================================================
 // NMR BOT - 24/7 VOICE BOT
 // Stable Reconnect + Logs + Status + Persistent Highest Time
+// + /addtime + /removetime + /settime
 // ============================================================
 
 // ============================================================
@@ -119,11 +122,16 @@ function saveData() {
       ),
       'utf8'
     );
+
+    return true;
+
   } catch (error) {
     console.error(
       '❌ Error saving data.json:',
       error
     );
+
+    return false;
   }
 }
 
@@ -144,6 +152,69 @@ function updateHighestVoiceTime(currentTime) {
   }
 
   return false;
+}
+
+// ============================================================
+// DURATION PARSER
+// ============================================================
+
+function parseDuration(input) {
+  if (!input || typeof input !== 'string') {
+    return null;
+  }
+
+  const value = input
+    .trim()
+    .toLowerCase();
+
+  // يقبل:
+  // 30s
+  // 10m
+  // 2h
+  // 3d
+
+  const match =
+    value.match(
+      /^(\d+(?:\.\d+)?)(s|m|h|d)$/
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const number =
+    Number(match[1]);
+
+  const unit =
+    match[2];
+
+  if (
+    !Number.isFinite(number) ||
+    number <= 0
+  ) {
+    return null;
+  }
+
+  const units = {
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000
+  };
+
+  const milliseconds =
+    number * units[unit];
+
+  // حماية من الأرقام الضخمة جدًا
+  if (
+    !Number.isSafeInteger(
+      Math.round(milliseconds)
+    )
+  ) {
+    return null;
+  }
+
+  return Math.round(milliseconds);
 }
 
 // ============================================================
@@ -244,7 +315,7 @@ function applyFooter(embed) {
 }
 
 // ============================================================
-// DURATION
+// DURATION FORMAT
 // ============================================================
 
 function formatDuration(ms) {
@@ -256,7 +327,9 @@ function formatDuration(ms) {
     Math.floor(ms / 1000);
 
   const days =
-    Math.floor(totalSeconds / 86400);
+    Math.floor(
+      totalSeconds / 86400
+    );
 
   const hours =
     Math.floor(
@@ -332,7 +405,7 @@ async function getLogChannel() {
 }
 
 // ============================================================
-// LOG
+// SEND LOG
 // ============================================================
 
 async function sendLog({
@@ -356,7 +429,9 @@ async function sendLog({
       new EmbedBuilder()
         .setTitle(title)
         .setDescription(description)
-        .setColor(color || 0x5865F2)
+        .setColor(
+          color || 0x5865F2
+        )
         .setTimestamp();
 
     applyFooter(embed);
@@ -383,45 +458,57 @@ async function sendLog({
 
 async function logOnline() {
   await sendLog({
-    title: '🟢 𝓝𝓜𝓡 BOT ONLINE',
+    title:
+      '🟢 𝓝𝓜𝓡 BOT ONLINE',
+
     description:
       `البوت اشتغل بنجاح.\n\n` +
       `🤖 **الحالة:** متصل\n` +
       `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
       `🕐 **الوقت:** ${cairoDate()}`,
+
     color: 0x57F287
   });
 }
 
 async function logDisconnected() {
   await sendLog({
-    title: '🟡 𝓝𝓜𝓡 VOICE DISCONNECTED',
+    title:
+      '🟡 𝓝𝓜𝓡 VOICE DISCONNECTED',
+
     description:
       `تم فقد الاتصال الصوتي.\n\n` +
       `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
       `🔄 **الحالة:** جاري استعادة الاتصال`,
+
     color: 0xFEE75C
   });
 }
 
 async function logReconnected() {
   await sendLog({
-    title: '🟢 𝓝𝓜𝓡 VOICE RECONNECTED',
+    title:
+      '🟢 𝓝𝓜𝓡 VOICE RECONNECTED',
+
     description:
       `تم استعادة الاتصال بالروم الصوتية بنجاح.\n\n` +
       `🎙️ **الروم:** <#${VOICE_CHANNEL_ID}>\n` +
       `🔄 **المحاولات:** ${reconnectAttempts}`,
+
     color: 0x57F287
   });
 }
 
 async function logLeftVoice() {
   await sendLog({
-    title: '⚠️ 𝓝𝓜𝓡 BOT LEFT VOICE',
+    title:
+      '⚠️ 𝓝𝓜𝓡 BOT LEFT VOICE',
+
     description:
       `البوت لم يعد داخل الروم الصوتية المطلوبة.\n\n` +
       `🎙️ **الروم المطلوبة:** <#${VOICE_CHANNEL_ID}>\n` +
       `🔄 **الإجراء:** محاولة إعادة الدخول`,
+
     color: 0xFEE75C
   });
 }
@@ -433,11 +520,44 @@ async function logError(error) {
       : String(error);
 
   await sendLog({
-    title: '🔴 𝓝𝓜𝓡 BOT ERROR',
+    title:
+      '🔴 𝓝𝓜𝓡 BOT ERROR',
+
     description:
       `حدث خطأ في البوت.\n\n` +
-      `\`\`\`\n${text.slice(0, 3500)}\n\`\`\``,
+      `\`\`\`\n${text.slice(
+        0,
+        3500
+      )}\n\`\`\``,
+
     color: 0xED4245
+  });
+}
+
+// ============================================================
+// TIME COMMAND LOG
+// ============================================================
+
+async function logTimeCommand({
+  command,
+  user,
+  amount,
+  oldTime,
+  newTime
+}) {
+  await sendLog({
+    title:
+      '⏱️ 𝓝𝓜𝓡 TIME UPDATE',
+
+    description:
+      `تم تعديل أعلى وقت للبوت.\n\n` +
+      `👤 **بواسطة:** ${user}\n` +
+      `⚙️ **الأمر:** \`/${command}\`\n` +
+      `⏱️ **القيمة:** \`${amount}\`\n\n` +
+      `📊 **قبل:** ${formatDuration(oldTime)}\n` +
+      `🏆 **بعد:** ${formatDuration(newTime)}`,
+
+    color: 0x5865F2
   });
 }
 
@@ -480,7 +600,8 @@ async function getStatusChannel() {
 function buildStatusEmbed() {
   const currentVoiceTime =
     voiceJoinTime
-      ? Date.now() - voiceJoinTime
+      ? Date.now() -
+        voiceJoinTime
       : 0;
 
   updateHighestVoiceTime(
@@ -490,40 +611,61 @@ function buildStatusEmbed() {
   const embed =
     new EmbedBuilder()
       .setTitle('𝓝𝓡𝓜 𝓑𝓞𝓣')
+
       .setDescription(
         '```ansi\n' +
-        '🟢 Connected\n' +
+        '🟢 البوت يعمل بشكل طبيعي\n' +
         '```'
       )
+
       .setColor(0x57F287)
+
       .addFields(
         {
-          name: '🤖 حالة البوت',
-          value: '🟢 **Online**',
+          name:
+            '🤖 حالة البوت',
+
+          value:
+            '🟢 **متصل**',
+
           inline: true
         },
+
         {
-          name: '🎙️ الروم الصوتية',
-          value: `<#${VOICE_CHANNEL_ID}>`,
+          name:
+            '🎙️ الروم الصوتية',
+
+          value:
+            `<#${VOICE_CHANNEL_ID}>`,
+
           inline: true
         },
+
         {
-          name: '⏱️ الوقت الحالي',
+          name:
+            '⏱️ الوقت الحالي',
+
           value:
             `\`${formatDuration(
               currentVoiceTime
             )}\``,
+
           inline: false
         },
+
         {
-          name: '🏆 أعلى وقت',
+          name:
+            '🏆 أعلى وقت',
+
           value:
             `\`${formatDuration(
               highestVoiceTime
             )}\``,
+
           inline: false
         }
       )
+
       .setTimestamp();
 
   applyFooter(embed);
@@ -632,6 +774,285 @@ async function updateStatus() {
 }
 
 // ============================================================
+// REGISTER SLASH COMMANDS
+// ============================================================
+
+async function registerCommands() {
+  try {
+    const guild =
+      await client.guilds.fetch(
+        LOG_GUILD_ID
+      );
+
+    if (!guild) {
+      console.error(
+        '❌ لم يتم العثور على سيرفر الأوامر'
+      );
+
+      return;
+    }
+
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('addtime')
+        .setDescription(
+          'إضافة وقت إلى أعلى وقت محفوظ للبوت'
+        )
+        .addStringOption(option =>
+          option
+            .setName('amount')
+            .setDescription(
+              'مثال: 2h أو 30m أو 1d'
+            )
+            .setRequired(true)
+        )
+        .setDefaultMemberPermissions(
+          PermissionFlagsBits.Administrator
+        ),
+
+      new SlashCommandBuilder()
+        .setName('removetime')
+        .setDescription(
+          'خصم وقت من أعلى وقت محفوظ للبوت'
+        )
+        .addStringOption(option =>
+          option
+            .setName('amount')
+            .setDescription(
+              'مثال: 2h أو 30m أو 1d'
+            )
+            .setRequired(true)
+        )
+        .setDefaultMemberPermissions(
+          PermissionFlagsBits.Administrator
+        ),
+
+      new SlashCommandBuilder()
+        .setName('settime')
+        .setDescription(
+          'تحديد أعلى وقت للبوت مباشرة'
+        )
+        .addStringOption(option =>
+          option
+            .setName('amount')
+            .setDescription(
+              'مثال: 2h أو 30m أو 1d'
+            )
+            .setRequired(true)
+        )
+        .setDefaultMemberPermissions(
+          PermissionFlagsBits.Administrator
+        )
+    ].map(command =>
+      command.toJSON()
+    );
+
+    await guild.commands.set(
+      commands
+    );
+
+    console.log(
+      '✅ تم تسجيل أوامر الوقت بنجاح'
+    );
+
+  } catch (error) {
+    console.error(
+      '❌ فشل تسجيل Slash Commands:',
+      error
+    );
+  }
+}
+
+// ============================================================
+// SLASH COMMAND HANDLER
+// ============================================================
+
+client.on(
+  Events.InteractionCreate,
+  async interaction => {
+    if (
+      !interaction.isChatInputCommand()
+    ) {
+      return;
+    }
+
+    const command =
+      interaction.commandName;
+
+    if (
+      ![
+        'addtime',
+        'removetime',
+        'settime'
+      ].includes(command)
+    ) {
+      return;
+    }
+
+    // ========================================================
+    // ADMIN CHECK
+    // ========================================================
+
+    if (
+      !interaction.memberPermissions?.has(
+        PermissionFlagsBits.Administrator
+      )
+    ) {
+      await interaction.reply({
+        content:
+          '❌ الأمر ده متاح للـ **Administrators فقط**.',
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    const input =
+      interaction.options.getString(
+        'amount',
+        true
+      );
+
+    const milliseconds =
+      parseDuration(input);
+
+    // ========================================================
+    // INVALID TIME
+    // ========================================================
+
+    if (!milliseconds) {
+      await interaction.reply({
+        content:
+          '❌ صيغة الوقت غلط.\n\n' +
+          'استخدم مثلًا:\n' +
+          '`30s` = 30 ثانية\n' +
+          '`30m` = 30 دقيقة\n' +
+          '`2h` = ساعتين\n' +
+          '`3d` = 3 أيام',
+
+        ephemeral: true
+      });
+
+      return;
+    }
+
+    const oldTime =
+      highestVoiceTime;
+
+    let newTime;
+
+    // ========================================================
+    // ADD TIME
+    // ========================================================
+
+    if (
+      command ===
+      'addtime'
+    ) {
+      newTime =
+        highestVoiceTime +
+        milliseconds;
+
+      highestVoiceTime =
+        newTime;
+
+      saveData();
+
+      await interaction.reply({
+        content:
+          `✅ تم إضافة **${formatDuration(
+            milliseconds
+          )}** إلى أعلى وقت.\n\n` +
+          `🏆 **أعلى وقت الآن:** ${formatDuration(
+            highestVoiceTime
+          )}`,
+
+        ephemeral: true
+      });
+    }
+
+    // ========================================================
+    // REMOVE TIME
+    // ========================================================
+
+    else if (
+      command ===
+      'removetime'
+    ) {
+      newTime =
+        Math.max(
+          0,
+          highestVoiceTime -
+            milliseconds
+        );
+
+      highestVoiceTime =
+        newTime;
+
+      saveData();
+
+      await interaction.reply({
+        content:
+          `✅ تم خصم **${formatDuration(
+            milliseconds
+          )}** من أعلى وقت.\n\n` +
+          `🏆 **أعلى وقت الآن:** ${formatDuration(
+            highestVoiceTime
+          )}`,
+
+        ephemeral: true
+      });
+    }
+
+    // ========================================================
+    // SET TIME
+    // ========================================================
+
+    else if (
+      command ===
+      'settime'
+    ) {
+      newTime =
+        milliseconds;
+
+      highestVoiceTime =
+        newTime;
+
+      saveData();
+
+      await interaction.reply({
+        content:
+          `✅ تم تحديد أعلى وقت يدويًا.\n\n` +
+          `🏆 **أعلى وقت الآن:** ${formatDuration(
+            highestVoiceTime
+          )}`,
+
+        ephemeral: true
+      });
+    }
+
+    // ========================================================
+    // UPDATE STATUS IMMEDIATELY
+    // ========================================================
+
+    await updateStatus();
+
+    // ========================================================
+    // LOG
+    // ========================================================
+
+    await logTimeCommand({
+      command,
+      user:
+        `${interaction.user.tag} (<@${interaction.user.id}>)`,
+      amount: input,
+      oldTime,
+      newTime
+    });
+  }
+);
+
+// ============================================================
 // DESTROY CURRENT CONNECTION
 // ============================================================
 
@@ -687,10 +1108,13 @@ async function createVoiceConnection() {
       joinVoiceChannel({
         channelId:
           VOICE_CHANNEL_ID,
+
         guildId:
           VOICE_GUILD_ID,
+
         adapterCreator:
           guild.voiceAdapterCreator,
+
         selfDeaf: true,
         selfMute: false
       });
@@ -699,7 +1123,7 @@ async function createVoiceConnection() {
       connection;
 
     // ========================================================
-    // CONNECTION EVENTS
+    // DISCONNECTED
     // ========================================================
 
     connection.on(
@@ -714,12 +1138,6 @@ async function createVoiceConnection() {
         );
 
         await logDisconnected();
-
-        // ====================================================
-        // مهم:
-        // نجرب استعادة الاتصال الحالي أولاً
-        // بدل destroy + create
-        // ====================================================
 
         try {
           await entersState(
@@ -754,6 +1172,10 @@ async function createVoiceConnection() {
       }
     );
 
+    // ========================================================
+    // DESTROYED
+    // ========================================================
+
     connection.on(
       VoiceConnectionStatus.Destroyed,
       () => {
@@ -768,6 +1190,10 @@ async function createVoiceConnection() {
         scheduleReconnect();
       }
     );
+
+    // ========================================================
+    // ERROR
+    // ========================================================
 
     connection.on(
       'error',
@@ -796,7 +1222,6 @@ async function createVoiceConnection() {
     currentVoiceConnection =
       connection;
 
-    // بداية جلسة جديدة
     voiceJoinTime =
       Date.now();
 
@@ -860,10 +1285,6 @@ function scheduleReconnect() {
         }
 
         try {
-          // ==================================================
-          // قبل ما ندخل، نتأكد إن البوت فعلًا مش في الروم
-          // ==================================================
-
           const guild =
             await client.guilds.fetch(
               VOICE_GUILD_ID
@@ -888,15 +1309,10 @@ function scheduleReconnect() {
             return;
           }
 
-          // ==================================================
-          // Destroy أي connection قديم فقط لو البوت مش موجود
-          // ==================================================
-
           destroyCurrentConnection();
 
           await createVoiceConnection();
 
-          // لو نجح الاتصال
           const updatedMember =
             await guild.members.fetch(
               client.user.id
@@ -922,7 +1338,9 @@ function scheduleReconnect() {
             MAX_RECONNECT_ATTEMPTS
           ) {
             isReconnecting = false;
+
             scheduleReconnect();
+
             return;
           }
 
@@ -968,20 +1386,12 @@ async function voiceWatchdog() {
     const channelId =
       member.voice.channelId;
 
-    // ========================================================
-    // البوت داخل الروم المطلوبة
-    // ========================================================
-
     if (
       channelId ===
       VOICE_CHANNEL_ID
     ) {
       return;
     }
-
-    // ========================================================
-    // البوت مش داخل الروم
-    // ========================================================
 
     console.log(
       '⚠️ Watchdog: البوت مش داخل الروم المطلوبة'
@@ -1024,10 +1434,6 @@ client.on(
     const newChannel =
       newState.channelId;
 
-    // ========================================================
-    // البوت خرج من الروم المطلوبة
-    // ========================================================
-
     if (
       oldChannel ===
         VOICE_CHANNEL_ID &&
@@ -1039,10 +1445,6 @@ client.on(
       );
 
       await logLeftVoice();
-
-      // ======================================================
-      // نعمل reconnect واحد فقط
-      // ======================================================
 
       scheduleReconnect();
     }
@@ -1072,10 +1474,16 @@ client.once(
       '=========================================='
     );
 
+    // تسجيل الأوامر
+    await registerCommands();
+
+    // Log Online
     await logOnline();
 
+    // دخول الفويس
     await createVoiceConnection();
 
+    // تحديث Status
     await updateStatus();
   }
 );
@@ -1205,7 +1613,6 @@ async function gracefulShutdown(
     `🛑 ${signal} received`
   );
 
-  // حفظ الوقت الحالي
   if (voiceJoinTime) {
     const currentTime =
       Date.now() -
@@ -1219,6 +1626,7 @@ async function gracefulShutdown(
   await sendLog({
     title:
       '🛑 𝓝𝓜𝓡 BOT SHUTDOWN',
+
     description:
       `البوت يتم إيقافه الآن.\n\n` +
       `📡 **Signal:** ${signal}\n` +
@@ -1226,6 +1634,7 @@ async function gracefulShutdown(
       `🏆 **أعلى وقت:** ${formatDuration(
         highestVoiceTime
       )}`,
+
     color: 0xED4245
   });
 
